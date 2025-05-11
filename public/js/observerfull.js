@@ -1,10 +1,10 @@
 // public/js/observerfull.js
 const socket = io();
 const videoElement = document.getElementById('observerFullVideo');
-const videoPlaceholder = document.getElementById('videoPlaceholder');
+const videoPlaceholder = document.getElementById('videoPlaceholder'); // Хотя он не будет видимым, ссылка может остаться
 
 let currentPeerConnection = null;
-let currentWebcamId = null;
+let currentWebcamId = null; // webcamId игрока, к которому пытаемся подключиться
 const observerSessionId = 'obs-full-' + Math.random().toString(36).substring(2, 9);
 
 console.log('ObserverFullJS: Initialized. Session ID:', observerSessionId);
@@ -15,17 +15,25 @@ if (!videoElement) {
 
 const pcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
-function showPlaceholder(message) {
-    if (videoElement) videoElement.style.display = 'none';
-    if (videoPlaceholder) {
-        videoPlaceholder.textContent = message || 'Нет сигнала / Камера отключена';
-        videoPlaceholder.style.display = 'flex';
+function showTransparentPage() {
+    console.log('ObserverFullJS: Showing transparent page.');
+    if (videoElement) {
+        videoElement.style.display = 'none';
+        videoElement.srcObject = null; // Убираем источник, чтобы остановить видео и очистить ресурсы
+    }
+    if (videoPlaceholder) { // На всякий случай, если он был бы видим
+        videoPlaceholder.style.display = 'none';
     }
 }
 
-function showVideo() {
-    if (videoPlaceholder) videoPlaceholder.style.display = 'none';
-    if (videoElement) videoElement.style.display = 'block';
+function showVideoElement() {
+    console.log('ObserverFullJS: Showing video element.');
+    if (videoPlaceholder) {
+        videoPlaceholder.style.display = 'none';
+    }
+    if (videoElement) {
+        videoElement.style.display = 'block';
+    }
 }
 
 async function connectToPlayerStream(targetPlayerWebcamId, playerName, showWebcamPreference = true) {
@@ -36,29 +44,30 @@ async function connectToPlayerStream(targetPlayerWebcamId, playerName, showWebca
         currentPeerConnection.close();
     }
     currentPeerConnection = null;
-    videoElement.srcObject = null; // Очищаем предыдущий поток
+    
+    // Сначала всегда делаем страницу прозрачной перед новой попыткой
+    showTransparentPage(); 
 
     if (!targetPlayerWebcamId) {
-        console.log("ObserverFullJS: No target webcam ID to connect to.");
-        showPlaceholder('Нет цели для отображения');
+        console.log("ObserverFullJS: No target webcam ID. Page remains transparent.");
         currentWebcamId = null;
         return;
     }
 
-    // Проверяем "галочку" (предполагается, что сервер пришлет эту информацию)
+    currentWebcamId = targetPlayerWebcamId; // Запоминаем, к кому пытаемся подключиться
+
     if (!showWebcamPreference) {
-        console.log(`ObserverFullJS: Webcam for ${playerName} is set to not show. Displaying placeholder.`);
-        showPlaceholder(`Камера игрока ${playerName} отключена`);
-        currentWebcamId = targetPlayerWebcamId; // Запоминаем, на кого смотрим, даже если камера не показана
+        console.log(`ObserverFullJS: Webcam for ${playerName} is set to not show. Page remains transparent.`);
+        // Ничего не показываем, страница уже прозрачная
         return;
     }
     
-    showVideo(); // Показываем видео элемент, скрываем плейсхолдер
+    // Если должны показать камеру, готовим видео элемент (он еще невидимый, пока нет потока)
+    // showVideoElement(); // Пока не показываем, пока нет потока
 
     console.log(`ObserverFullJS: Creating new RTCPeerConnection for player ${playerName}`);
     const pc = new RTCPeerConnection(pcConfig);
     currentPeerConnection = pc;
-    currentWebcamId = targetPlayerWebcamId;
 
     pc.onicecandidate = event => {
         if (event.candidate) {
@@ -72,30 +81,45 @@ async function connectToPlayerStream(targetPlayerWebcamId, playerName, showWebca
             if (videoElement.srcObject !== event.streams[0]) {
                 videoElement.srcObject = event.streams[0];
                 videoElement.play().catch(e => console.error(`ObserverFullJS: Error playing video for ${playerName}:`, e));
-                console.log(`ObserverFullJS: Stream assigned for ${playerName}`);
-                showVideo();
+                console.log(`ObserverFullJS: Stream assigned and playing for ${playerName}`);
+                showVideoElement(); // Показываем видео, так как поток пришел
             }
         } else {
-            console.warn(`ObserverFullJS: Track event for ${playerName} did not contain streams[0].`);
-            showPlaceholder(`Ошибка потока от ${playerName}`);
+            console.warn(`ObserverFullJS: Track event for ${playerName} did not contain streams[0]. Page remains transparent.`);
+            showTransparentPage();
         }
     };
 
-    pc.oniceconnectionstatechange = () => console.log(`ObserverFullJS: ICE state with ${playerName}: ${pc.iceConnectionState}`);
+    pc.oniceconnectionstatechange = () => {
+        const iceState = pc.iceConnectionState;
+        console.log(`ObserverFullJS: ICE state with ${playerName}: ${iceState}`);
+        if (iceState === 'failed' || iceState === 'disconnected' || iceState === 'closed') {
+             if (currentWebcamId === targetPlayerWebcamId) { // Если это все еще актуальный игрок
+                console.log(`ObserverFullJS: ICE connection with ${playerName} is ${iceState}. Page becomes transparent.`);
+                showTransparentPage();
+            }
+        }
+    };
     pc.onsignalingstatechange = () => console.log(`ObserverFullJS: Signaling state with ${playerName}: ${pc.signalingState}`);
     pc.onconnectionstatechange = () => {
-        console.log(`ObserverFullJS: Connection state with ${playerName}: ${pc.connectionState}`);
-        if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
-            if (currentWebcamId === targetPlayerWebcamId) { // Если это все еще актуальный игрок
-                showPlaceholder(`Соединение с ${playerName} потеряно`);
+        const connState = pc.connectionState;
+        console.log(`ObserverFullJS: Connection state with ${playerName}: ${connState}`);
+        if (connState === 'failed' || connState === 'disconnected' || connState === 'closed') {
+            if (currentWebcamId === targetPlayerWebcamId) {
+                console.log(`ObserverFullJS: Connection with ${playerName} is ${connState}. Page becomes transparent.`);
+                showTransparentPage();
             }
-        } else if (pc.connectionState === 'connected') {
-            showVideo();
+        } else if (connState === 'connected') {
+            // Видео должно было уже показаться через ontrack, но на всякий случай
+            if (videoElement.srcObject) { // Убедимся, что поток есть
+                 console.log(`ObserverFullJS: Connection with ${playerName} established. Ensuring video is visible.`);
+                showVideoElement();
+            }
         }
     };
 
     pc.addTransceiver('video', { direction: 'recvonly' });
-    pc.addTransceiver('audio', { direction: 'recvonly' });
+    pc.addTransceiver('audio', { direction: 'recvonly' }); // Можно убрать, если звук не нужен
 
     try {
         const offer = await pc.createOffer();
@@ -103,18 +127,20 @@ async function connectToPlayerStream(targetPlayerWebcamId, playerName, showWebca
         socket.emit('webrtc_offer', { offer: offer, targetWebcamId: targetPlayerWebcamId, senderWebcamId: observerSessionId });
     } catch (e) {
         console.error(`ObserverFullJS: Error creating/sending offer to ${playerName}:`, e);
-        showPlaceholder(`Ошибка подключения к ${playerName}`);
+        showTransparentPage(); // Ошибка при создании оффера - показываем прозрачность
     }
 }
 
 socket.on('spectate_change', (data) => {
-    const { nickname, webcamId, showWebcam } = data; // Ожидаем, что сервер будет присылать showWebcam
+    // Ожидаем, что сервер будет присылать showWebcam измененным в server.js (как в полном коде #43)
+    const { nickname, webcamId, showWebcam } = data; 
     console.log('ObserverFullJS: Received spectate_change:', data);
     
-    if (!webcamId) {
-        connectToPlayerStream(null, 'N/A'); // Очистить видео, показать плейсхолдер "нет цели"
+    if (!webcamId) { // Если GSI обсервер никого не смотрит
+        connectToPlayerStream(null, 'N/A');
     } else {
-        connectToPlayerStream(webcamId, nickname, showWebcam);
+        // showWebcam должно приходить от сервера, если нет - считаем true для обратной совместимости
+        connectToPlayerStream(webcamId, nickname, showWebcam === undefined ? true : showWebcam);
     }
 });
 
@@ -130,7 +156,6 @@ socket.on('webrtc_answer_to_viewer', async ({ answer, playerWebcamId, viewerWebc
 
 socket.on('webrtc_ice_candidate_to_client', async ({ candidate, forTargetId, iceSenderId }) => {
     if (forTargetId !== observerSessionId || !currentPeerConnection || iceSenderId !== currentWebcamId ) return;
-    // console.log(`ObserverFullJS: Received ICE from player ${iceSenderId}`);
     if (candidate) {
         try { await currentPeerConnection.addIceCandidate(new RTCIceCandidate(candidate)); }
         catch (e) { console.error(`ObserverFullJS: Error adding ICE from ${iceSenderId}:`, e); }
@@ -139,11 +164,10 @@ socket.on('webrtc_ice_candidate_to_client', async ({ candidate, forTargetId, ice
 
 socket.on('connect', () => {
     console.log('ObserverFullJS: Connected to socket server.');
-    // Можно запросить текущего наблюдаемого игрока, если сервер это поддерживает
-    // socket.emit('request_current_spectator_info'); // Пример
+    showTransparentPage(); // При подключении по умолчанию прозрачно, ждем spectate_change
 });
 
 socket.on('disconnect', () => {
     console.log('ObserverFullJS: Disconnected from socket server.');
-    showPlaceholder('Нет соединения с сервером');
+    showTransparentPage();
 });
