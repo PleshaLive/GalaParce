@@ -14,45 +14,50 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 3001;
-// Установите ваш секретный токен. Если не используете, оставьте "" и удалите 'auth' из CS2 GSI .cfg
-const GSI_AUTH_TOKEN = "YOUR_SECRET_GSI_TOKEN_HERE"; // << ЗАМЕНИТЕ ИЛИ ОСТАВЬТЕ ПУСТЫМ
+// Устанавливаем пустую строку, чтобы НЕ использовать GSI токен.
+// Если решите использовать, впишите сюда токен и такой же в CS2 GSI .cfg файл.
+const GSI_AUTH_TOKEN = ""; // РАБОТА БЕЗ ТОКЕНА
 
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(express.static('public'));
 
 let players = {}; // { nickname: { webcamId, steamID, socketId } }
 let currentSpectatedSteamID = null;
-let gsiPlayerNames = {}; // { steamID: 'gsiName' }
+let gsiPlayerNames = {}; // { steamID: 'gsiName' } - обновляется при каждом GSI POST
 
 app.post('/gsi', (req, res) => {
     const gsiData = req.body;
-    if (GSI_AUTH_TOKEN) {
+
+    // Проверка токена, только если GSI_AUTH_TOKEN не пустой на сервере
+    if (GSI_AUTH_TOKEN) { 
         if (!gsiData.auth || gsiData.auth.token !== GSI_AUTH_TOKEN) {
-            console.warn('GSI: Unauthorized request. Token mismatch or missing.');
+            console.warn('GSI: Unauthorized request. Token mismatch or missing from client.');
             return res.status(401).send('Unauthorized');
         }
     }
+    // Если GSI_AUTH_TOKEN пустой, проверка выше не выполняется, запросы принимаются.
+
+    // console.log('GSI data received at:', new Date().toISOString()); // Лог времени получения GSI
+    // if (gsiData.allplayers) {
+    //     console.log('GSI allplayers:', JSON.stringify(gsiData.allplayers, null, 2));
+    // } else {
+    //     console.log('GSI: No allplayers data in this payload.');
+    // }
+
 
     let newSpectatedSteamID = null;
     if (gsiData.player && gsiData.player.steamid && gsiData.player.activity === 'playing') {
         if (gsiData.player.spectarget) newSpectatedSteamID = gsiData.player.spectarget;
     }
 
-    let gsiDataUpdated = false;
+    // Обновление gsiPlayerNames при каждом валидном GSI запросе
+    const tempGsiPlayerNames = {};
     if (gsiData.allplayers) {
-        const currentGsiKeys = Object.keys(gsiData.allplayers);
-        const previousGsiKeys = Object.keys(gsiPlayerNames);
-        // Проверяем, изменился ли состав или имена игроков
-        if (currentGsiKeys.length !== previousGsiKeys.length || 
-            !currentGsiKeys.every(key => gsiData.allplayers[key].name === gsiPlayerNames[key])) {
-            gsiDataUpdated = true;
-        }
-
-        const tempGsiPlayerNames = {};
         for (const steamID in gsiData.allplayers) {
             const playerNameFromGSI = gsiData.allplayers[steamID].name;
             if (playerNameFromGSI) {
                 tempGsiPlayerNames[steamID] = playerNameFromGSI;
+                // Попытка авто-связывания SteamID с уже зарегистрированным игроком по нику (если SteamID еще не связан)
                 const playerToUpdate = Object.values(players).find(p => p.nickname === playerNameFromGSI && !p.steamID);
                 if (playerToUpdate) {
                     playerToUpdate.steamID = steamID;
@@ -61,18 +66,9 @@ app.post('/gsi', (req, res) => {
                 }
             }
         }
-        gsiPlayerNames = tempGsiPlayerNames; // Обновляем основной объект
-    } else if (Object.keys(gsiPlayerNames).length > 0) { // Если allplayers пропал, а раньше был
-        gsiPlayerNames = {}; // Очищаем, так как данных нет
-        gsiDataUpdated = true;
     }
-    
-    // Если данные об игроках обновились, оповещаем клиентов, которые могут быть на странице player.html
-    if (gsiDataUpdated) {
-        console.log('GSI: Player data updated, notifying relevant clients.');
-        // Мы не знаем, какой конкретно сокет запрашивал, поэтому можем отправить всем или придумать механизм подписки
-        // Пока что, клиент сам будет перезапрашивать при необходимости или при первом входе
-    }
+    gsiPlayerNames = tempGsiPlayerNames; // Перезаписываем свежими данными
+    // console.log('GSI: Updated gsiPlayerNames:', gsiPlayerNames);
 
 
     if (newSpectatedSteamID !== currentSpectatedSteamID) {
@@ -94,16 +90,17 @@ app.post('/gsi', (req, res) => {
 io.on('connection', (socket) => {
     console.log('Socket.IO: User connected:', socket.id);
     const currentActivePlayers = Object.values(players).filter(p => p.webcamId && p.socketId).map(p => ({ nickname: p.nickname, webcamId: p.webcamId, steamID: p.steamID }));
-    socket.emit('current_players', currentActivePlayers);
+    socket.emit('current_players', currentActivePlayers); // Для observer.js
 
-    // НОВЫЙ ОБРАБОТЧИК для запроса списка игроков для страницы player.html
     socket.on('request_player_setup_data', () => {
-        console.log(`Socket.IO: Received request_player_setup_data from socket ${socket.id}`);
+        console.log(`Socket.IO: Received request_player_setup_data from socket ${socket.id}. Current gsiPlayerNames:`, gsiPlayerNames);
         const serverPlayersList = [];
-        for (const steamID in gsiPlayerNames) {
+        for (const steamID in gsiPlayerNames) { // Используем актуальный gsiPlayerNames
             const gsiName = gsiPlayerNames[steamID];
+            // Проверка, зарегистрирован ли игрок (по SteamID или по никнейму с активным сокетом)
             const isRegisteredBySteamID = Object.values(players).some(p => p.steamID === steamID && p.socketId);
             const isRegisteredByNickname = players[gsiName] && players[gsiName].socketId;
+            
             serverPlayersList.push({
                 name: gsiName,
                 steamID: steamID,
@@ -115,14 +112,13 @@ io.on('connection', (socket) => {
     });
 
     socket.on('register_player', (data) => {
-        const { nickname, webcamId, steamID } = data; // steamID теперь должен приходить с клиента
+        const { nickname, webcamId, steamID } = data;
         console.log(`Socket.IO: register_player attempt:`, data);
         if (!nickname || !webcamId) { socket.emit('registration_error', 'Nickname and webcamId are required.'); console.warn(`Socket.IO: Reg failed (socket ${socket.id}): Nickname/webcamId missing.`); return; }
         
-        // Проверяем, не занят ли этот никнейм + steamID другим активным сокетом
-        const existingPlayer = Object.values(players).find(p => (p.nickname === nickname || (p.steamID && p.steamID === steamID)) && p.socketId !== socket.id);
+        const existingPlayer = Object.values(players).find(p => ((p.nickname === nickname && p.steamID === steamID) || (p.steamID && p.steamID === steamID)) && p.socketId !== socket.id );
         if (existingPlayer) {
-            socket.emit('registration_error', `Player ${nickname} (or SteamID ${steamID}) is already registered by another session.`);
+            socket.emit('registration_error', `Player ${nickname} (SteamID: ${steamID}) is already registered by another session.`);
             console.warn(`Socket.IO: Reg failed for ${nickname}: Player already registered by another session.`);
             return;
         }
@@ -133,10 +129,7 @@ io.on('connection', (socket) => {
              return;
         }
 
-        players[nickname] = { // Ключом все еще может быть никнейм, но теперь мы также храним SteamID
-            nickname, webcamId, steamID,
-            socketId: socket.id
-        };
+        players[nickname] = { nickname, webcamId, steamID, socketId: socket.id };
         console.log(`Socket.IO: Player registered/updated: ${nickname} (Webcam: ${webcamId}, SteamID: ${steamID || 'N/A'}, Socket: ${socket.id})`);
         io.emit('player_update', { nickname, webcamId, steamID: players[nickname].steamID });
         socket.emit('registration_success', players[nickname]);
@@ -162,5 +155,5 @@ io.on('connection', (socket) => {
 
 server.listen(PORT, () => {
     console.log(`CS2 Observer Cam Server running on http://localhost:${PORT}`);
-    console.log(`GSI Endpoint: http://<your-railway-app-public-url>/gsi`);
+    console.log(`GSI Endpoint: ${process.env.RAILWAY_STATIC_URL ? 'https://' + process.env.RAILWAY_STATIC_URL : 'http://<your-deployed-url>'}/gsi`);
 });

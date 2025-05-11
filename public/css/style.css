@@ -1,132 +1,19 @@
 /* public/css/style.css */
-body {
-    font-family: Arial, sans-serif;
-    margin: 20px;
-    background-color: #282c34;
-    color: #abb2bf;
-    line-height: 1.6;
-}
-
-h1, h2, h3 {
-    color: #61afef;
-    margin-top: 20px;
-    margin-bottom: 10px;
-}
-
-label {
-    display: block;
-    margin-top: 10px;
-    margin-bottom: 5px;
-    color: #98c379;
-}
-
-input[type="text"],
-select {
-    width: calc(100% - 22px);
-    max-width: 400px;
-    padding: 10px;
-    margin-bottom: 10px;
-    border-radius: 4px;
-    border: 1px solid #3b4048;
-    background-color: #323840;
-    color: #abb2bf;
-    box-sizing: border-box;
-}
-
-button {
-    padding: 10px 15px;
-    border: none;
-    border-radius: 4px;
-    background-color: #61afef;
-    color: #282c34;
-    cursor: pointer;
-    font-size: 1em;
-    margin-top: 10px;
-}
-
-button:hover {
-    background-color: #529CCA;
-}
-
-button:disabled {
-    background-color: #4f5660;
-    cursor: not-allowed;
-}
-
-video {
-    border: 2px solid #61afef;
-    background-color: #000;
-    margin-top: 10px;
-    margin-bottom: 10px;
-    display: block;
-}
-
-#localVideoPreview {
-    width: 320px;
-    height: 240px;
-}
-
-#spectatorVideo {
-    width: 640px;
-    height: 480px;
-    max-width: 100%;
-}
-
-#status {
-    margin-top: 15px;
-    font-style: italic;
-    color: #e5c07b;
-    min-height: 20px;
-}
-
-#playerList, #playerWebcamsContainer ul {
-    list-style-type: none;
-    padding: 0;
-}
-
-#playerList li, #playerWebcamsContainer li {
-    background-color: #323840;
-    padding: 8px;
-    margin-bottom: 5px;
-    border-radius: 3px;
-    border: 1px solid #3b4048;
-}
-
-#playerWebcamsContainer {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 15px;
-    margin-top: 20px;
-    justify-content: flex-start;
-}
-
-.player-camera-item {
-    border: 1px solid #4f5660;
-    padding: 10px;
-    border-radius: 5px;
-    background-color: #323840;
-    text-align: center;
-    width: calc(33.333% - 10px); /* Примерно 3 в ряд, если достаточно места */
-    min-width: 300px; 
-    box-sizing: border-box;
-}
-
-.player-camera-item h3 {
-    margin-top: 0;
-    font-size: 1.1em;
-}
-
-.player-camera-item video {
-    width: 100%;
-    height: auto;
-    max-width: 320px;
-    max-height: 240px;
-}
-
-small {
-    display: block;
-    font-size: 0.85em;
-    color: #7f8895;
-    margin-top: -5px;
-    margin-bottom: 10px;
-}
+body { font-family: Arial, sans-serif; margin: 20px; background-color: #282c34; color: #abb2bf; line-height: 1.6; }
+h1, h2, h3 { color: #61afef; margin-top: 20px; margin-bottom: 10px; }
+label { display: block; margin-top: 10px; margin-bottom: 5px; color: #98c379; }
+input[type="text"], select { width: calc(100% - 22px); max-width: 400px; padding: 10px; margin-bottom: 10px; border-radius: 4px; border: 1px solid #3b4048; background-color: #323840; color: #abb2bf; box-sizing: border-box; }
+button { padding: 10px 15px; border: none; border-radius: 4px; background-color: #61afef; color: #282c34; cursor: pointer; font-size: 1em; margin-top: 10px; }
+button:hover { background-color: #529CCA; }
+button:disabled { background-color: #4f5660; cursor: not-allowed; }
+video { border: 2px solid #61afef; background-color: #000; margin-top: 10px; margin-bottom: 10px; display: block; }
+#localVideoPreview { width: 320px; height: 240px; }
+#spectatorVideo { width: 640px; height: 480px; max-width: 100%; }
+#status, #nicknameLoadingStatus { margin-top: 10px; font-style: italic; color: #e5c07b; min-height: 1.2em; }
+#playerList, #playerWebcamsContainer ul { list-style-type: none; padding: 0; }
+#playerList li, #playerWebcamsContainer li { background-color: #323840; padding: 8px; margin-bottom: 5px; border-radius: 3px; border: 1px solid #3b4048; }
+#playerWebcamsContainer { display: flex; flex-wrap: wrap; gap: 15px; margin-top: 20px; justify-content: flex-start; }
+.player-camera-item { border: 1px solid #4f5660; padding: 10px; border-radius: 5px; background-color: #323840; text-align: center; width: calc(33.333% - 10px); min-width: 300px; box-sizing: border-box; }
+.player-camera-item h3 { margin-top: 0; font-size: 1.1em; }
+.player-camera-item video { width: 100%; height: auto; max-width: 320px; max-height: 240px; }
+small { display: block; font-size: 0.85em; color: #7f8895; margin-top: -5px; margin-bottom: 10px; }

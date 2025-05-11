@@ -11,14 +11,13 @@ const statusEl = document.getElementById('status');
 let localStream;
 let myUniqueWebcamId = 'player-' + Math.random().toString(36).substring(2, 9);
 let peerConnections = {}; 
-// let availableServerPlayers = []; // Не храним глобально, получаем каждый раз
 
 const pcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
 socket.on('connect', () => {
     console.log('PlayerJS: Connected to socket. Requesting player setup data.');
     nicknameLoadingStatus.textContent = 'Запрос списка игроков...';
-    startStreamBtn.disabled = true; // Держим кнопку неактивной во время загрузки
+    startStreamBtn.disabled = true;
     socket.emit('request_player_setup_data');
 });
 
@@ -40,9 +39,8 @@ socket.on('player_setup_data_available', (serverPlayers) => {
         });
         nicknameLoadingStatus.textContent = hasAvailablePlayers ? 'Выберите ваш никнейм.' : 'Все игроки из списка уже с камерами.';
     } else {
-        nicknameLoadingStatus.textContent = 'На сервере нет игроков (по данным GSI) или нет доступных слотов.';
+        nicknameLoadingStatus.textContent = 'На сервере нет игроков (по данным GSI) или все уже с камерами. Убедитесь, что CS2 с GSI запущена и вы в игре/наблюдаете.';
     }
-    // Кнопка "Начать трансляцию" будет активирована при выборе валидного игрока и активной камере
     checkStartButtonState(); 
 });
 
@@ -111,11 +109,10 @@ startStreamBtn.onclick = () => {
 socket.on('registration_success', (data) => { console.log('PlayerJS: Reg success:', data); statusEl.textContent = `Зарегистрированы как ${data.nickname}. Ожидание зрителей...`; });
 socket.on('registration_error', (message) => {
     console.error('PlayerJS: Reg Error:', message); statusEl.textContent = `Ошибка регистрации: ${message}`;
-    nicknameSelect.disabled = false; steamIDInput.disabled = false; webcamSelect.disabled = false; // Разблокируем контролы
-    checkStartButtonState(); // Перепроверяем состояние кнопки
+    nicknameSelect.disabled = false; steamIDInput.disabled = false; webcamSelect.disabled = false;
+    checkStartButtonState();
 });
 
-// --- WebRTC Logic (без изменений с предыдущего полного ответа) ---
 socket.on('webrtc_offer_from_viewer', async ({ offer, viewerWebcamId }) => {
     console.log(`PlayerJS: Received Offer from viewer ${viewerWebcamId}`, offer);
     if (!localStream) { console.error("PlayerJS: localStream not available for offer."); return; }
@@ -135,7 +132,7 @@ socket.on('webrtc_offer_from_viewer', async ({ offer, viewerWebcamId }) => {
     } catch (e) { console.error(`PlayerJS: Error handling offer/answer for ${viewerWebcamId}:`, e); }
 });
 socket.on('webrtc_ice_candidate_from_peer', async ({ candidate, iceSenderId }) => {
-    const viewerWebcamId = iceSenderId; // iceSenderId is the ID of the viewer
+    const viewerWebcamId = iceSenderId;
     console.log(`PlayerJS: Received ICE from viewer ${viewerWebcamId}:`, candidate);
     if (peerConnections[viewerWebcamId] && candidate) {
          try { await peerConnections[viewerWebcamId].addIceCandidate(new RTCIceCandidate(candidate)); console.log(`PlayerJS: Added ICE from ${viewerWebcamId}.`); }
