@@ -1,22 +1,24 @@
 const socket = io();
 const videoElement = document.getElementById('observerFullVideo');
-// const videoPlaceholder = document.getElementById('videoPlaceholder'); // Можно удалить, если плейсхолдер не используется для текста
+// const videoPlaceholder = document.getElementById('videoPlaceholder'); // Закомментировано, так как не используется активно для текста
+
 let activePeerConnection = null; // Активное соединение, которое сейчас показывает видео
 let pendingPeerConnection = null; // Соединение, которое настраивается для замены активного
 let currentTargetWebcamId = null; // ID вебкамеры, которую мы пытаемся отобразить
 const observerSessionId = 'obs-full-' + Math.random().toString(36).substring(2, 9);
 
-if (!videoElement) console.error("ObserverFullJS: Video element not found!");
+if (!videoElement) console.error("ObserverFullJS: CRITICAL - Video element 'observerFullVideo' not found!");
+
 const pcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 
 function showTransparentPage() {
     if (videoElement) {
         videoElement.style.display = 'none';
-        // videoElement.srcObject = null; // Очистка srcObject будет происходить при фактическом закрытии PC или при явной остановке
+        // videoElement.srcObject = null; // Очистка srcObject происходит при закрытии PC или явной остановке
     }
-    // Если у вас был videoPlaceholder для текста "Нет сигнала", его можно показать здесь
+    // Если бы videoPlaceholder использовался для текста "Нет сигнала", его можно было бы показать здесь:
     // if (videoPlaceholder) videoPlaceholder.style.display = 'flex';
-    console.log("Showing transparent page, video hidden.");
+    console.log("Showing transparent page (video hidden).");
 }
 
 function showVideoElement() {
@@ -40,13 +42,13 @@ async function connectToPlayerStream(targetPlayerWebcamId, playerName, showWebca
             (activePeerConnection.connectionState === 'connected' || activePeerConnection.connectionState === 'connecting')) {
             console.log("Already active or connecting to", targetPlayerWebcamId);
             if (videoElement.srcObject && videoElement.style.display === 'none') {
-                showVideoElement(); // Убедимся, что видео показывается, если оно уже есть
+                showVideoElement(); // Убедимся, что видео показывается
             }
             return;
         }
     }
 
-    const oldTargetWebcamId = currentTargetWebcamId;
+    // const oldTargetWebcamId = currentTargetWebcamId; // Если понадобится для отладки
     currentTargetWebcamId = targetPlayerWebcamId; // Оптимистично обновляем ID целевой камеры
 
     // Если есть ожидающее соединение (pendingPeerConnection) для *другой* цели, закроем его
@@ -82,9 +84,8 @@ async function connectToPlayerStream(targetPlayerWebcamId, playerName, showWebca
     pc.playerName = playerName;
 
     // Новое соединение становится "ожидающим"
-    // Если уже было другое pending соединение (не должно быть после проверки выше, но на всякий случай)
-    if (pendingPeerConnection && pendingPeerConnection !== pc) {
-        console.warn("Unexpected existing pending PC, closing it:", pendingPeerConnection.targetWebcamId);
+    if (pendingPeerConnection && pendingPeerConnection !== pc) { // Должно было быть закрыто выше, если цель изменилась
+        console.warn("Unexpected existing pending PC while creating new one, closing it:", pendingPeerConnection.targetWebcamId);
         pendingPeerConnection.close();
     }
     pendingPeerConnection = pc;
@@ -93,7 +94,7 @@ async function connectToPlayerStream(targetPlayerWebcamId, playerName, showWebca
         if (event.candidate) {
             socket.emit('webrtc_ice_candidate', {
                 candidate: event.candidate,
-                targetId: pc.targetWebcamId,
+                targetId: pc.targetWebcamId, // Используем pc.targetWebcamId
                 isTargetPlayer: true,
                 senderId: observerSessionId
             });
@@ -107,37 +108,73 @@ async function connectToPlayerStream(targetPlayerWebcamId, playerName, showWebca
         if (pc !== pendingPeerConnection || pc.targetWebcamId !== currentTargetWebcamId) {
             console.log("Ontrack for stale or mismatched PC. Ignoring. Closing this PC if not active.", pc.targetWebcamId);
             if (pc !== activePeerConnection && pc.connectionState !== 'closed') {
-                 pc.close(); // Закрываем, если это "заблудившийся" трек для неактуального PC
+                 pc.close();
             }
             return;
         }
 
         if (event.streams && event.streams[0]) {
             console.log("Valid stream received for", pc.targetWebcamId);
-            if(videoElement.srcObject !== event.streams[0]) { // Избегаем лишних присвоений, если объект тот же
-                 videoElement.srcObject = event.streams[0];
-            }
-            videoElement.play().catch(e => {
-                console.error("Error playing video for " + pc.targetWebcamId + ":", e);
-                if (pendingPeerConnection === pc) pendingPeerConnection = null;
-                if (activePeerConnection === pc) activePeerConnection = null; // Если это был активный, он больше не активен
-                if(pc.connectionState !== 'closed') pc.close();
-                if (currentTargetWebcamId === pc.targetWebcamId) showTransparentPage(); // Показать фон, если текущая цель не удалась
-            });
-            showVideoElement();
+            const newStream = event.streams[0];
+            pc.stream = newStream; // Сохраняем ссылку на поток в объекте PC на всякий случай
 
-            // Новый стрим активен. Закрываем *предыдущее* активное соединение.
-            if (activePeerConnection && activePeerConnection !== pc) {
-                console.log("New stream active for", pc.targetWebcamId, ". Closing old active PC for", activePeerConnection.targetWebcamId);
-                activePeerConnection.close();
+            const oldActivePcToClose = activePeerConnection;
+
+            if (videoElement.srcObject !== newStream) {
+                videoElement.srcObject = newStream;
             }
-            activePeerConnection = pc; // Этот PC теперь активный
-            pendingPeerConnection = null; // Больше не ожидающий
+            // videoElement.muted = true; // Если нужно принудительно выключить звук
+
+            videoElement.play().then(() => {
+                console.log("Video play() promise resolved for", pc.targetWebcamId);
+                showVideoElement(); // Убедимся, что видеоэлемент видим
+
+                const onPlayingHandler = () => {
+                    console.log("Video 'playing' event fired for", pc.targetWebcamId);
+                    videoElement.removeEventListener('playing', onPlayingHandler);
+
+                    if (oldActivePcToClose && oldActivePcToClose !== pc) {
+                        console.log("New stream confirmed playing for", pc.targetWebcamId, ". Closing old active PC for", oldActivePcToClose.targetWebcamId);
+                        oldActivePcToClose.close();
+                    }
+                    activePeerConnection = pc;
+                    if (pendingPeerConnection === pc) {
+                        pendingPeerConnection = null;
+                    }
+                };
+                videoElement.addEventListener('playing', onPlayingHandler);
+
+            }).catch(e => {
+                console.error("Error on video.play() for " + pc.targetWebcamId + ":", e);
+
+                if (videoElement.srcObject === newStream) {
+                    videoElement.srcObject = null;
+                }
+
+                if (pendingPeerConnection === pc) {
+                    pendingPeerConnection = null;
+                }
+                if (pc.connectionState !== 'closed') {
+                    pc.close();
+                }
+
+                if (currentTargetWebcamId === pc.targetWebcamId) {
+                    if (!oldActivePcToClose || oldActivePcToClose.targetWebcamId !== currentTargetWebcamId) {
+                        console.log("Play failed for new stream, and no valid old stream for current target. Showing transparent.");
+                        showTransparentPage();
+                    } else if (oldActivePcToClose && oldActivePcToClose.stream && videoElement.srcObject !== oldActivePcToClose.stream) {
+                        // Попытка восстановить старый поток, если он был затер и play() нового не удался
+                        console.log("Play failed for new stream, attempting to restore previous stream for " + oldActivePcToClose.targetWebcamId);
+                        videoElement.srcObject = oldActivePcToClose.stream;
+                        videoElement.play().catch(restoreErr => console.error("Error restoring old stream:", restoreErr));
+                        showVideoElement(); // Убедимся, что видео снова показывается
+                    }
+                }
+            });
         } else {
             console.warn("Ontrack event without valid stream for", pc.targetWebcamId);
             if (pendingPeerConnection === pc) pendingPeerConnection = null;
-            if(pc.connectionState !== 'closed') pc.close(); // Закрываем этот неудачный PC
-            // Если этот PC должен был стать активным для currentTargetWebcamId, и нет другого активного PC, показать фон
+            if (pc.connectionState !== 'closed') pc.close();
             if (currentTargetWebcamId === pc.targetWebcamId && activePeerConnection !== pc) {
                  if (!activePeerConnection || activePeerConnection.targetWebcamId !== currentTargetWebcamId) {
                     showTransparentPage();
@@ -160,16 +197,14 @@ async function connectToPlayerStream(targetPlayerWebcamId, playerName, showWebca
             wasActive = true;
         }
 
-        if(failedPc.connectionState !== 'closed') {
+        if (failedPc.connectionState !== 'closed') {
             failedPc.close();
         }
 
-        // Если соединение, которое было активным (или должно было стать активным для текущей цели) разорвалось
         if ((wasActive || wasPending) && currentTargetWebcamId === failedPc.targetWebcamId) {
-            // И нет другого активного соединения для этой же цели
             if (!activePeerConnection || activePeerConnection.targetWebcamId !== currentTargetWebcamId) {
-                console.log("Active/Pending PC failed for current target, showing transparent page.");
-                if(videoElement) videoElement.srcObject = null;
+                console.log("Critical PC failed for current target, showing transparent page.");
+                if (videoElement) videoElement.srcObject = null;
                 showTransparentPage();
             }
         }
@@ -177,7 +212,7 @@ async function connectToPlayerStream(targetPlayerWebcamId, playerName, showWebca
 
     pc.oniceconnectionstatechange = () => {
         const state = pc.iceConnectionState;
-        console.log(`ICE state for PC target ${pc.targetWebcamId}: ${state}`);
+        // console.log(`ICE state for PC target ${pc.targetWebcamId}: ${state}`); // Может быть слишком много логов
         if (['failed', 'disconnected', 'closed'].includes(state)) {
             handleConnectionFailure(pc, `ICE ${state}`);
         }
@@ -189,11 +224,13 @@ async function connectToPlayerStream(targetPlayerWebcamId, playerName, showWebca
         if (['failed', 'disconnected', 'closed'].includes(state)) {
             handleConnectionFailure(pc, `Connection ${state}`);
         } else if (state === 'connected') {
-            // Если это pending PC и он стал connected, ontrack должен был уже сделать его active.
-            // Если это active PC (например, переподключился) и видео скрыто, покажем его.
             if (pc === activePeerConnection && videoElement.srcObject && videoElement.style.display === 'none') {
-                 console.log("Active PC re-connected, ensuring video is visible for", pc.targetWebcamId);
+                 console.log("Active PC re-connected/confirmed, ensuring video is visible for", pc.targetWebcamId);
                  showVideoElement();
+            } else if (pc === pendingPeerConnection && pc.targetWebcamId === currentTargetWebcamId) {
+                // Если pending стал connected, ontrack должен был уже обработать.
+                // Это состояние полезно для отладки.
+                console.log("Pending PC for", pc.targetWebcamId, "is now 'connected'. Ontrack should follow if not already processed.");
             }
         }
     };
@@ -213,8 +250,7 @@ async function connectToPlayerStream(targetPlayerWebcamId, playerName, showWebca
     } catch (e) {
         console.error("Error creating offer for " + pc.targetWebcamId + ":", e);
         if (pendingPeerConnection === pc) pendingPeerConnection = null;
-        if(pc.connectionState !== 'closed') pc.close();
-        // Если этот неудачный PC был для текущей цели, и нет другого активного, показать фон
+        if (pc.connectionState !== 'closed') pc.close();
         if (currentTargetWebcamId === pc.targetWebcamId && (!activePeerConnection || activePeerConnection.targetWebcamId !== currentTargetWebcamId)) {
             showTransparentPage();
         }
@@ -243,25 +279,24 @@ socket.on('webrtc_answer_to_viewer', async ({ answer, playerWebcamId, viewerWebc
     }
 
     console.log("Received answer for", playerWebcamId, ". PC target:", targetPC.targetWebcamId, ". Current signaling state:", targetPC.signalingState);
-    if (targetPC.signalingState === 'have-local-offer' || targetPC.signalingState === 'stable') { // stable - если оффер был "переотправлен"
+    if (targetPC.signalingState === 'have-local-offer' || targetPC.signalingState === 'stable') {
         try {
             await targetPC.setRemoteDescription(new RTCSessionDescription(answer));
             console.log("Remote description set for", playerWebcamId);
         } catch (e) {
             console.error(`Error setting remote description for ${playerWebcamId} (PC target ${targetPC.targetWebcamId}):`, e);
-            // Этот PC не смог обработать ответ, считаем его неудачным
             if (pendingPeerConnection === targetPC) pendingPeerConnection = null;
             if (activePeerConnection === targetPC) {
                 activePeerConnection = null;
-                 if (currentTargetWebcamId === targetPC.targetWebcamId) { // Если он был активным для текущей цели
-                    if(videoElement) videoElement.srcObject = null;
+                 if (currentTargetWebcamId === targetPC.targetWebcamId) {
+                    if (videoElement) videoElement.srcObject = null;
                     showTransparentPage();
                  }
             }
-            if(targetPC.connectionState !== 'closed') targetPC.close();
+            if (targetPC.connectionState !== 'closed') targetPC.close();
         }
     } else {
-        console.warn("Received answer for", playerWebcamId, "but PC signaling state is", targetPC.signalingState);
+        console.warn("Received answer for", playerWebcamId, "but PC signaling state is", targetPC.signalingState, "(expected have-local-offer or stable)");
     }
 });
 
@@ -272,7 +307,7 @@ socket.on('webrtc_ice_candidate_to_client', async ({ candidate, forTargetId, ice
                      ((activePeerConnection?.targetWebcamId === iceSenderId) ? activePeerConnection : null);
 
     if (!targetPC) {
-        // console.log("Received ICE for unknown or stale PC from sender:", iceSenderId); // Может быть много логов
+        // console.log("Received ICE for unknown or stale PC from sender:", iceSenderId); // Очень много логов может быть
         return;
     }
     if (targetPC.signalingState === 'closed') {
@@ -284,19 +319,17 @@ socket.on('webrtc_ice_candidate_to_client', async ({ candidate, forTargetId, ice
         try {
             await targetPC.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (e) {
-            // console.error(`Error adding ICE candidate from ${iceSenderId} for PC target ${targetPC.targetWebcamId}:`, e); // Может быть много логов
+            // console.error(`Error adding ICE candidate from ${iceSenderId} for PC target ${targetPC.targetWebcamId}:`, e); // Много логов
         }
     }
 });
 
 socket.on('connect', () => {
     console.log("Socket connected to server (observerfull).");
-    // При подключении, сервер может прислать 'spectate_change'.
-    // Сбрасываем локальное состояние на случай переподключения.
-    if(pendingPeerConnection) { pendingPeerConnection.close(); pendingPeerConnection = null;}
-    if(activePeerConnection) { activePeerConnection.close(); activePeerConnection = null;}
+    if (pendingPeerConnection) { pendingPeerConnection.close(); pendingPeerConnection = null; }
+    if (activePeerConnection) { activePeerConnection.close(); activePeerConnection = null; }
     currentTargetWebcamId = null;
-    if(videoElement) videoElement.srcObject = null;
+    if (videoElement) videoElement.srcObject = null;
     showTransparentPage();
 });
 
@@ -311,6 +344,6 @@ socket.on('disconnect', () => {
         activePeerConnection = null;
     }
     currentTargetWebcamId = null;
-    if(videoElement) videoElement.srcObject = null; // Очищаем видео при дисконнекте
+    if (videoElement) videoElement.srcObject = null;
     showTransparentPage();
 });
