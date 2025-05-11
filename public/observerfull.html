@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Full Observer Cam</title>
+    <style>
+        body, html { margin: 0; padding: 0; overflow: hidden; background-color: #000; }
+        #observerFullVideo { width: 100vw; height: 100vh; object-fit: contain; /* или 'cover' */ }
+        .placeholder-no-cam {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #555;
+            font-size: 2em;
+            background-color: #111;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <video id="observerFullVideo" autoplay playsinline></video>
+    <div id="videoPlaceholder" class="placeholder-no-cam" style="display: none;">Камера неактивна или отключена</div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/observerfull.js"></script> 
+</body>
+</html>
