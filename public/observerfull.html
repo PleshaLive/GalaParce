@@ -9,37 +9,30 @@
             margin: 0; 
             padding: 0; 
             overflow: hidden; 
-            background-color: transparent; /* <<< ОСНОВНОЕ ИЗМЕНЕНИЕ ДЛЯ ПРОЗРАЧНОСТИ */
+            background-color: transparent; 
         }
         #observerFullVideo { 
             width: 100vw; 
             height: 100vh; 
-            object-fit: contain; /* или 'cover', в зависимости от нужного поведения */
-            background-color: transparent; /* Фон самого видео элемента, когда нет потока */
-            display: none; /* Изначально скрыто, будет показано JS */
-        }
-        /* Плейсхолдер больше не нужен для отображения текста, он будет просто скрывать видео */
-        /* Если вы все же хотите какой-то отладочный плейсхолдер, его можно стилизовать здесь,
-           но для полной прозрачности он должен быть display: none */
-        #videoPlaceholder {
-            display: none; /* Полностью скрываем плейсхолдер по умолчанию */
-            /* Если нужен был бы видимый плейсхолдер:
-            width: 100vw;
-            height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            color: #333; // Для отладки можно сделать видимым
-            font-size: 2em;
-            background-color: rgba(0,0,0,0.1); // Полупрозрачный для отладки
-            text-align: center;
+            /* ИЗМЕНЕНИЕ ЗДЕСЬ: 
+                'fill' - растянет видео, чтобы заполнить контейнер, может исказить пропорции.
+                'cover' - заполнит контейнер, сохраняя пропорции, но может обрезать часть видео.
+                'contain' - впишет видео целиком, сохраняя пропорции, могут быть черные полосы.
             */
+            object-fit: fill; /* <<< ИЗМЕНЕНО НА 'fill' */
+            background-color: transparent; 
+            display: none; 
+        }
+        #videoPlaceholder {
+            display: none; 
         }
     </style>
 </head>
 <body>
     <video id="observerFullVideo" autoplay playsinline></video>
-    <div id="videoPlaceholder"></div> <script src="/socket.io/socket.io.js"></script>
+    <div id="videoPlaceholder"></div>
+
+    <script src="/socket.io/socket.io.js"></script>
     <script src="/js/observerfull.js"></script> 
 </body>
 </html>
