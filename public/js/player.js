@@ -17,7 +17,7 @@ const pcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
 socket.on('connect', () => {
     console.log('PlayerJS: Connected to socket. Requesting player setup data.');
     nicknameLoadingStatus.textContent = 'Запрос списка игроков...';
-    startStreamBtn.disabled = true;
+    startStreamBtn.disabled = true; 
     socket.emit('request_player_setup_data');
 });
 
