@@ -1,0 +1,134 @@
+/* public/css/style.css */
+
+body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+    background-color: #282c34; /* Темный фон */
+    color: #abb2bf; /* Светлый текст */
+    line-height: 1.6;
+}
+
+h1, h2, h3 {
+    color: #61afef; /* Голубой для заголовков */
+    margin-top: 20px;
+    margin-bottom: 10px;
+}
+
+label {
+    display: block;
+    margin-top: 10px;
+    margin-bottom: 5px;
+    color: #98c379; /* Зеленоватый для меток */
+}
+
+input[type="text"],
+select {
+    width: calc(100% - 22px); /* Учитываем padding и border */
+    max-width: 400px;
+    padding: 10px;
+    margin-bottom: 10px;
+    border-radius: 4px;
+    border: 1px solid #3b4048; /* Темная рамка */
+    background-color: #323840; /* Темный фон для инпутов */
+    color: #abb2bf; /* Светлый текст в инпутах */
+    box-sizing: border-box;
+}
+
+button {
+    padding: 10px 15px;
+    border: none;
+    border-radius: 4px;
+    background-color: #61afef; /* Голубой для кнопок */
+    color: #282c34; /* Темный текст на кнопке */
+    cursor: pointer;
+    font-size: 1em;
+    margin-top: 10px;
+}
+
+button:hover {
+    background-color: #529CCA; /* Немного темнее при наведении */
+}
+
+button:disabled {
+    background-color: #4f5660; /* Серый для неактивных кнопок */
+    cursor: not-allowed;
+}
+
+video {
+    border: 2px solid #61afef; /* Голубая рамка для видео */
+    background-color: #000; /* Черный фон под видео */
+    margin-top: 10px;
+    margin-bottom: 10px;
+    display: block; /* Чтобы margin работал корректно */
+}
+
+#localVideoPreview { /* Для страницы player.html */
+    width: 320px;
+    height: 240px;
+}
+
+#spectatorVideo { /* Для страницы observer.html - основное видео */
+    width: 640px;
+    height: 480px;
+    max-width: 100%; /* Адаптивность */
+}
+
+#status {
+    margin-top: 15px;
+    font-style: italic;
+    color: #e5c07b; /* Желтоватый для статуса */
+    min-height: 20px; /* Чтобы не прыгала разметка при изменении текста */
+}
+
+#playerList, #playerWebcamsContainer ul {
+    list-style-type: none;
+    padding: 0;
+}
+
+#playerList li, #playerWebcamsContainer li { /* Если будете использовать список */
+    background-color: #323840;
+    padding: 8px;
+    margin-bottom: 5px;
+    border-radius: 3px;
+    border: 1px solid #3b4048;
+}
+
+/* Стили для контейнера с камерами игроков на странице обсервера */
+#playerWebcamsContainer {
+    display: flex;
+    flex-wrap: wrap; /* Позволяет переносить элементы на новую строку */
+    gap: 15px; /* Пространство между элементами */
+    margin-top: 20px;
+    justify-content: flex-start; /* Выравнивание по началу */
+}
+
+.player-camera-item {
+    border: 1px solid #4f5660; /* Рамка для каждого блока с камерой */
+    padding: 10px;
+    border-radius: 5px;
+    background-color: #323840; /* Фон блока */
+    text-align: center; /* Центрирование текста и кнопки */
+    width: calc(33.333% - 10px); /* Примерно 3 в ряд, учитывая gap */
+    min-width: 300px; /* Минимальная ширина, чтобы не слишком сжимались */
+    box-sizing: border-box;
+}
+
+.player-camera-item h3 {
+    margin-top: 0;
+    font-size: 1.1em;
+}
+
+.player-camera-item video {
+    width: 100%; /* Видео занимает всю ширину блока */
+    height: auto; /* Автоматическая высота для сохранения пропорций */
+    max-width: 320px; /* Ограничение максимальной ширины превью */
+    max-height: 240px;
+}
+
+small {
+    display: block;
+    font-size: 0.85em;
+    color: #7f8895; /* Более тусклый цвет для подсказок */
+    margin-top: -5px;
+    margin-bottom: 10px;
+}

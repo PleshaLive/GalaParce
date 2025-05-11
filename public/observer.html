@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Камера Обсервера CS2</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <h1>Вид Обсервера</h1>
+    <p>Сейчас наблюдаем за: <strong id="spectatingNickname">N/A</strong> (SteamID: <span id="spectatingSteamID">N/A</span>)</p>
+    <div id="mainVideoContainer">
+        <video id="spectatorVideo" autoplay playsinline controls width="640" height="480"></video>
+    </div>
+    <hr>
+    <h2>Все активные игроки (нажмите для просмотра):</h2>
+    <div id="playerWebcamsContainer">
+        </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/js/observer.js"></script>
+</body>
+</html>
