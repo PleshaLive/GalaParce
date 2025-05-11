@@ -5,33 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Full Observer Cam - Output</title>
     <style>
-        body, html { 
-            margin: 0; 
-            padding: 0; 
-            overflow: hidden; 
-            background-color: transparent; 
-        }
-        #observerFullVideo { 
-            width: 100vw; 
-            height: 100vh; 
-            /* ИЗМЕНЕНИЕ ЗДЕСЬ: 
-                'fill' - растянет видео, чтобы заполнить контейнер, может исказить пропорции.
-                'cover' - заполнит контейнер, сохраняя пропорции, но может обрезать часть видео.
-                'contain' - впишет видео целиком, сохраняя пропорции, могут быть черные полосы.
-            */
-            object-fit: fill; /* <<< ИЗМЕНЕНО НА 'fill' */
-            background-color: transparent; 
-            display: none; 
-        }
-        #videoPlaceholder {
-            display: none; 
-        }
+        body, html { margin: 0; padding: 0; overflow: hidden; background-color: transparent; }
+        #observerFullVideo { width: 100vw; height: 100vh; object-fit: fill; background-color: transparent; display: none; }
+        #videoPlaceholder { display: none; }
     </style>
 </head>
 <body>
     <video id="observerFullVideo" autoplay playsinline></video>
     <div id="videoPlaceholder"></div>
-
     <script src="/socket.io/socket.io.js"></script>
     <script src="/js/observerfull.js"></script> 
 </body>

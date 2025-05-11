@@ -8,7 +8,6 @@
 </head>
 <body>
     <h1>Настройка Веб-камеры</h1>
-    
     <div id="setupControls">
         <div>
             <label for="nicknameSelect">Выберите ваш никнейм на сервере:</label>
@@ -17,27 +16,22 @@
             </select>
             <small id="nicknameLoadingStatus"></small>
         </div>
-
         <div>
             <label for="steamID">Ваш SteamID64 (заполнится автоматически):</label>
             <input type="text" id="steamID" placeholder="765..." readonly>
             <small>Это поможет точнее связать вас с данными из игры.</small>
         </div>
-        
         <div>
             <label for="webcamSelect">Выберите Веб-камеру:</label>
             <select id="webcamSelect"></select>
         </div>
     </div>
-
     <video id="localVideoPreview" autoplay muted playsinline></video>
-    
     <div id="actionButtons">
         <button id="startStreamBtn" disabled>Начать Трансляцию</button>
         <button id="stopStreamBtn" style="display: none;">Отключить Камеру</button>
     </div>
     <p id="status"></p>
-
     <script src="/socket.io/socket.io.js"></script>
     <script src="/js/player.js"></script>
 </body>
