@@ -14,24 +14,31 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 3001;
-const GSI_AUTH_TOKEN = "YOUR_SECRET_GSI_TOKEN"; // << ЗАМЕНИТЕ НА ВАШ ТОКЕН
+// Установите ваш секретный токен здесь.
+// Если вы НЕ ХОТИТЕ использовать токен, оставьте эту строку пустой (GSI_AUTH_TOKEN = "";)
+// И ОБЯЗАТЕЛЬНО удалите/закомментируйте секцию 'auth' в вашем CS2 GSI .cfg файле.
+// Для публичных URL рекомендуется использовать токен.
+const GSI_AUTH_TOKEN = "YOUR_SECRET_GSI_TOKEN_HERE"; // << ЗАМЕНИТЕ ИЛИ ОСТАВЬТЕ ПУСТЫМ
 
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(express.static('public'));
 
-let players = {};
+let players = {}; // { nickname: { webcamId, steamID, socketId } }
 let currentSpectatedSteamID = null;
-let gsiPlayerNames = {};
+let gsiPlayerNames = {}; // { steamID: 'gsiName' }
 
 app.post('/gsi', (req, res) => {
     const gsiData = req.body;
 
-    if (GSI_AUTH_TOKEN && (!gsiData.auth || gsiData.auth.token !== GSI_AUTH_TOKEN)) {
-        console.warn('GSI: Unauthorized request received.');
-        return res.status(401).send('Unauthorized');
+    // Проверка токена, если он задан на сервере
+    if (GSI_AUTH_TOKEN) { // Эта проверка сработает, только если GSI_AUTH_TOKEN не пустой
+        if (!gsiData.auth || gsiData.auth.token !== GSI_AUTH_TOKEN) {
+            console.warn('GSI: Unauthorized request. Token mismatch or missing from client.');
+            return res.status(401).send('Unauthorized');
+        }
     }
 
-    // console.log('GSI data received:', JSON.stringify(gsiData, null, 2)); // DEBUG: лог всех данных GSI
+    // console.log('GSI data received:', JSON.stringify(gsiData, null, 2)); // DEBUG
 
     let newSpectatedSteamID = null;
     if (gsiData.player && gsiData.player.steamid && gsiData.player.activity === 'playing') {
@@ -59,7 +66,6 @@ app.post('/gsi', (req, res) => {
         currentSpectatedSteamID = newSpectatedSteamID;
         let targetNickname = "Unknown";
         let targetWebcamId = null;
-
         const registeredPlayer = Object.values(players).find(p => p.steamID === currentSpectatedSteamID);
         if (registeredPlayer) {
             targetNickname = registeredPlayer.nickname;
@@ -67,16 +73,11 @@ app.post('/gsi', (req, res) => {
         } else if (gsiPlayerNames[currentSpectatedSteamID]) {
             targetNickname = gsiPlayerNames[currentSpectatedSteamID];
         }
-
-        console.log(`GSI: Observer is now spectating: ${targetNickname} (SteamID: ${currentSpectatedSteamID || 'N/A'}, WebcamID: ${targetWebcamId || 'N/A'})`);
-        io.emit('spectate_change', {
-            steamID: currentSpectatedSteamID,
-            nickname: targetNickname,
-            webcamId: targetWebcamId
-        });
+        console.log(`GSI: Spectate change -> ${targetNickname} (SteamID: ${currentSpectatedSteamID || 'N/A'}, Webcam: ${targetWebcamId || 'N/A'})`);
+        io.emit('spectate_change', { steamID: currentSpectatedSteamID, nickname: targetNickname, webcamId: targetWebcamId });
     } else if (!newSpectatedSteamID && currentSpectatedSteamID !== null) {
         currentSpectatedSteamID = null;
-        console.log("GSI: Observer is no longer spectating a specific player.");
+        console.log("GSI: Spectate change -> No specific player (free cam/overview).");
         io.emit('spectate_change', { steamID: null, nickname: null, webcamId: null });
     }
     res.status(200).send('OK');
@@ -84,7 +85,6 @@ app.post('/gsi', (req, res) => {
 
 io.on('connection', (socket) => {
     console.log('Socket.IO: User connected:', socket.id);
-
     const currentActivePlayers = Object.values(players)
         .filter(p => p.webcamId && p.socketId)
         .map(p => ({ nickname: p.nickname, webcamId: p.webcamId, steamID: p.steamID }));
@@ -92,33 +92,27 @@ io.on('connection', (socket) => {
 
     socket.on('register_player', (data) => {
         const { nickname, webcamId, steamID } = data;
-        console.log(`Socket.IO: Received register_player attempt:`, data);
+        console.log(`Socket.IO: register_player attempt:`, data);
         if (!nickname || !webcamId) {
             socket.emit('registration_error', 'Nickname and webcamId are required.');
-            console.warn(`Socket.IO: Registration failed for socket ${socket.id}: Nickname or webcamId missing.`);
+            console.warn(`Socket.IO: Reg failed (socket ${socket.id}): Nickname/webcamId missing.`);
             return;
         }
-
         if (players[nickname] && players[nickname].socketId !== socket.id) {
             socket.emit('registration_error', `Nickname ${nickname} is already in use by another session.`);
-            console.warn(`Socket.IO: Registration failed for ${nickname}: Nickname in use by another session.`);
             return;
         }
         const existingPlayerByWebcamId = Object.values(players).find(p => p.webcamId === webcamId && p.nickname !== nickname);
         if (existingPlayerByWebcamId) {
              socket.emit('registration_error', `Webcam ID ${webcamId} is already in use by player ${existingPlayerByWebcamId.nickname}.`);
-             console.warn(`Socket.IO: Registration failed for ${nickname}: Webcam ID ${webcamId} in use.`);
              return;
         }
-
         players[nickname] = {
-            nickname,
-            webcamId,
+            nickname, webcamId,
             steamID: steamID || (gsiPlayerNames && Object.keys(gsiPlayerNames).find(sid => gsiPlayerNames[sid] === nickname)) || players[nickname]?.steamID || null,
             socketId: socket.id
         };
         console.log(`Socket.IO: Player registered/updated: ${nickname} (Webcam: ${webcamId}, SteamID: ${players[nickname].steamID}, Socket: ${socket.id})`);
-        
         io.emit('player_update', { nickname, webcamId, steamID: players[nickname].steamID });
         socket.emit('registration_success', players[nickname]);
     });
@@ -126,38 +120,31 @@ io.on('connection', (socket) => {
     socket.on('webrtc_offer', ({ offer, targetWebcamId, senderWebcamId }) => {
         const targetPlayer = Object.values(players).find(p => p.webcamId === targetWebcamId);
         if (targetPlayer && targetPlayer.socketId) {
-            console.log(`Socket.IO: Forwarding WebRTC offer from sender ${senderWebcamId} (viewer) to player ${targetPlayer.nickname} (socket ${targetPlayer.socketId}) for webcam ${targetWebcamId}`);
+            console.log(`Socket.IO: Signaling: Forwarding WebRTC offer from ${senderWebcamId} to player ${targetPlayer.nickname} (${targetPlayer.socketId})`);
             io.to(targetPlayer.socketId).emit('webrtc_offer_from_viewer', { offer, viewerWebcamId: senderWebcamId });
         } else {
-            console.warn(`Socket.IO: WebRTC Offer - Player with webcamId ${targetWebcamId} not found or not connected. Offer from ${senderWebcamId}.`);
+            console.warn(`Socket.IO: Signaling: WebRTC Offer - Target player ${targetWebcamId} not found/connected. Offer from ${senderWebcamId}.`);
             socket.emit('webrtc_error', { targetWebcamId, message: 'Target player not found or not connected.'});
         }
     });
 
     socket.on('webrtc_answer', ({ answer, targetViewerWebcamId, senderPlayerWebcamId }) => {
-        console.log(`Socket.IO: Forwarding WebRTC answer from player ${senderPlayerWebcamId} to viewer ${targetViewerWebcamId}`);
+        console.log(`Socket.IO: Signaling: Forwarding WebRTC answer from player ${senderPlayerWebcamId} to viewer ${targetViewerWebcamId}`);
         io.emit('webrtc_answer_to_viewer', { answer, playerWebcamId: senderPlayerWebcamId, viewerWebcamId: targetViewerWebcamId });
     });
 
     socket.on('webrtc_ice_candidate', ({ candidate, targetId, isTargetPlayer, senderId }) => {
-        // console.log(`Socket.IO: Received ICE candidate from ${senderId} for ${targetId} (isTargetPlayer: ${isTargetPlayer})`); // DEBUG: Log all ICE
+        // console.log(`Socket.IO: Signaling: ICE from ${senderId} for ${targetId} (isTargetPlayer: ${isTargetPlayer})`); // DEBUG
         let recipientSocketId = null;
         if (isTargetPlayer) {
             const targetPlayer = Object.values(players).find(p => p.webcamId === targetId);
-            if (targetPlayer && targetPlayer.socketId) {
-                recipientSocketId = targetPlayer.socketId;
-                // console.log(`Socket.IO: ICE for player ${targetPlayer.nickname} (socket ${recipientSocketId}).`);
-            }
+            if (targetPlayer && targetPlayer.socketId) recipientSocketId = targetPlayer.socketId;
         } else {
-            // console.log(`Socket.IO: ICE for viewer ${targetId}. Broadcasting 'webrtc_ice_candidate_to_client'.`);
             io.emit('webrtc_ice_candidate_to_client', { candidate, forTargetId: targetId, iceSenderId: senderId });
             return; 
         }
-
         if (recipientSocketId) {
             io.to(recipientSocketId).emit('webrtc_ice_candidate_from_peer', { candidate, iceSenderId: senderId });
-        } else {
-            // console.warn(`Socket.IO: ICE Candidate - Recipient for targetId ${targetId} (isTargetPlayer: ${isTargetPlayer}) not found.`);
         }
     });
 
@@ -165,8 +152,8 @@ io.on('connection', (socket) => {
         console.log('Socket.IO: User disconnected:', socket.id);
         for (const nickname in players) {
             if (players[nickname].socketId === socket.id) {
-                console.log(`Socket.IO: Player ${nickname} (Webcam: ${players[nickname].webcamId}) disconnected.`);
                 const { webcamId } = players[nickname];
+                console.log(`Socket.IO: Player ${nickname} (Webcam: ${webcamId}) disconnected.`);
                 delete players[nickname];
                 io.emit('player_left', { nickname, webcamId });
                 break;
@@ -177,5 +164,5 @@ io.on('connection', (socket) => {
 
 server.listen(PORT, () => {
     console.log(`CS2 Observer Cam Server is running on http://localhost:${PORT}`);
-    console.log(`GSI Endpoint will be on http://<your-railway-app-public-url>/gsi`);
+    console.log(`GSI Endpoint configured for http://<your-railway-app-public-url>/gsi`);
 });
