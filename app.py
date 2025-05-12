@@ -196,13 +196,13 @@ HTML_TEMPLATE_SCOREBOARD = """
             isFetching = true; loadingIndicator.style.display = 'inline-block';
             try {
                 const response = await fetch('/scoreboard_json');
-                if (!response.ok) throw new Error(\`Ошибка сети: \${response.status}\`);
+                if (!response.ok) throw new Error('Ошибка сети: ' + response.status);
                 const scoreboardData = await response.json();
                 buildScoreboardTables(scoreboardData); // Вызываем обновленную функцию
                 statusText.textContent = \`Обновлено: \${new Date().toLocaleTimeString()}\`; errorCount = 0;
             } catch (error) {
                 placeholder.textContent = 'Ошибка загрузки данных таблицы.'; console.error(error);
-                statusText.textContent = \`Ошибка: \${error.message}. #\${errorCount+1}\`; errorCount++;
+                statusText.textContent = 'Ошибка: ' + error.message + '. #' + (errorCount+1); errorCount++;
                 if (errorCount >= MAX_ERRORS) { statusText.textContent += ' Автообновление остановлено.'; clearInterval(intervalId); }
             } finally {
                 isFetching = false; loadingIndicator.style.display = 'none';
