@@ -88,7 +88,8 @@ HTML_TEMPLATE_MSG_ONLY = """<!DOCTYPE html><html lang="ru"><head><meta charset="
 # Шаблон для страницы "Анализатор Логов"
 HTML_TEMPLATE_LOG_ANALYZER = """<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>CS2 Log Analyzer</title><style>.content-wrapper h1{margin-bottom:20px;}#log-analyzer-output{font-family:var(--font-mono);font-size:13px;line-height:1.6;flex-grow:1;overflow-y:auto;padding:10px;background-color:#181a1f;border-radius:6px;}.log-line{margin-bottom:3px;padding:2px 5px;border-radius:3px;white-space:pre-wrap;word-break:break-all;cursor:default;}.log-line.chat{background-color:#36485e;color:#a6e3a1;border-left:3px solid #a6e3a1;}.log-line.kill{background-color:#5c374f;color:#f38ba8;border-left:3px solid #f38ba8;}.log-line.damage{background-color:#6e584c;color:#fab387;}.log-line.grenade{background-color:#3e4b6e;color:#cba6f7;}.log-line.purchase{background-color:#2e535e;color:#89dceb;}.log-line.pickup{background-color:#3e5a6e;color:#94e2d5;}.log-line.connect{color:#a6e3a1;}.log-line.disconnect{color:#f38ba8;}.log-line.system{color:var(--text-muted);font-style:italic;}.log-line.unknown{color:var(--text-muted);opacity:0.8;}</style></head><body><div class="content-wrapper"><h1>Анализатор Логов CS2</h1><div id="log-analyzer-output">Загрузка логов...</div></div><div class="status-bar"><span id="status-text">Ожидание данных...</span><span id="loading-indicator" style="display:none;" class="loader"></span></div><script>const outputContainer=document.getElementById('log-analyzer-output');const statusText=document.getElementById('status-text');const loadingIndicator=document.getElementById('loading-indicator');let isFetching=!1,errorCount=0;const MAX_ERRORS=5;const chatRegex=/(\\".+?\\"<\\d+><\\[U:\\d:\\d+\\]><\w+>)\\s+(?:say|say_team)\\s+\\"([^\\"]*)\\"/i;const killRegex=/killed\\s+\\".+?\\"<\\d+>/i;const damageRegex=/attacked\\s+\\".+?\\"<\\d+><.+?>.*\\(damage\\s+\\"\\d+\\"\\)/i;const grenadeRegex=/threw\\s+(hegrenade|flashbang|smokegrenade|molotov|decoy)/i;const connectRegex=/connected|entered the game/i;const disconnectRegex=/disconnected|left the game/i;const purchaseRegex=/purchased\\s+\\"(\\w+)\\"/i;const pickupRegex=/picked up\\s+\\"(\\w+)\\"/i;const teamSwitchRegex=/switched team to/i;const nameChangeRegex=/changed name to/i;function getLogLineInfo(line){if(chatRegex.test(line))return{type:'Чат',class:'chat'};if(killRegex.test(line))return{type:'Убийство',class:'kill'};if(damageRegex.test(line))return{type:'Урон',class:'damage'};if(grenadeRegex.test(line))return{type:'Граната',class:'grenade'};if(purchaseRegex.test(line))return{type:'Покупка',class:'purchase'};if(pickupRegex.test(line))return{type:'Подбор',class:'pickup'};if(connectRegex.test(line))return{type:'Подключение',class:'connect'};if(disconnectRegex.test(line))return{type:'Отключение',class:'disconnect'};if(teamSwitchRegex.test(line))return{type:'Смена команды',class:'system'};if(nameChangeRegex.test(line))return{type:'Смена ника',class:'system'};return{type:'Неизвестно/Система',class:'unknown'}}async function fetchAndAnalyzeLogs(){if(isFetching||errorCount>=MAX_ERRORS)return;isFetching=!0;loadingIndicator.style.display='inline-block';try{const response=await fetch('/raw_json');if(!response.ok)throw new Error('Ошибка сети: '+response.status);const logLines=await response.json();const isScrolledToBottom=outputContainer.scrollTop+outputContainer.clientHeight>=outputContainer.scrollHeight-50;outputContainer.innerHTML='';if(logLines.length===0){outputContainer.textContent='Нет данных лога для анализа.'}else{logLines.forEach(line=>{const info=getLogLineInfo(line);const lineDiv=document.createElement('div');lineDiv.className=`log-line ${info.class}`;lineDiv.textContent=line;lineDiv.title=`Тип: ${info.type}`;outputContainer.appendChild(lineDiv)})}if(isScrolledToBottom){setTimeout(()=>{outputContainer.scrollTop=outputContainer.scrollHeight},0)}statusText.textContent='Обновлено: '+new Date().toLocaleTimeString()+` (${logLines.length} строк)`;errorCount=0}catch(error){outputContainer.textContent='Ошибка загрузки или анализа логов.';console.error(error);statusText.textContent='Ошибка: '+error.message+'. #'+(errorCount+1);errorCount++;if(errorCount>=MAX_ERRORS){statusText.textContent+=' Автообновление остановлено.';clearInterval(intervalId)}}finally{isFetching=!1;loadingIndicator.style.display='none'}}const intervalId=setInterval(fetchAndAnalyzeLogs,5000);fetchAndAnalyzeLogs();</script></body></html>"""
 
-# Шаблон для страницы "Таблица счета" (с обновленным CSS для вертикального отображения)
+# --- ИЗМЕНЕНО: Шаблон для страницы "Таблица счета" ---
+# Включает CSS для вертикального расположения и JS для скрытия accountid
 HTML_TEMPLATE_SCOREBOARD = """<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>CS2 Scoreboard</title><style>
 .content-wrapper h1{margin-bottom:20px;}
 /* --- CSS для контейнера таблиц (вертикальное расположение) --- */
@@ -118,8 +119,73 @@ table.scoreboard{width:100%;border-collapse:collapse;font-size:0.80em;font-famil
 .scoreboard tbody tr:hover{background-color:var(--link-hover-bg);}
 .no-data{text-align:center;padding:20px;color:var(--text-muted);}
 .nickname-col{font-weight:bold;color:var(--text-color);}
-</style></head><body><div class="content-wrapper"><h1>Таблица счета (Scoreboard)</h1><div class="scoreboard-teams-container" id="scoreboard-teams-container"></div><div id="scoreboard-placeholder" class="no-data">Загрузка данных таблицы счета...</div></div><div class="status-bar"><span id="status-text">Ожидание данных...</span><span id="loading-indicator" style="display:none;" class="loader"></span></div><script>const teamsContainer=document.getElementById('scoreboard-teams-container');const placeholder=document.getElementById('scoreboard-placeholder');const statusText=document.getElementById('status-text');const loadingIndicator=document.getElementById('loading-indicator');let isFetching=!1,errorCount=0;const MAX_ERRORS=5;function createTeamTableElement(teamName,teamPlayers,fieldsToDisplay,teamClass){const wrapper=document.createElement('div');wrapper.className='team-table-wrapper';const title=document.createElement('h2');title.textContent=teamName;wrapper.appendChild(title);const table=document.createElement('table');table.className='scoreboard '+teamClass;const tableHead=table.createTHead();const tableBody=table.createTBody();const headerRow=tableHead.insertRow();let orderedFields=[...fieldsToDisplay];const nameKeys=['nickname','name','playername','имя','никнейм'];let actualNicknameKey=null;for(const key of nameKeys){const foundKey=orderedFields.find(f=>f.trim().toLowerCase()===key.toLowerCase());if(foundKey){actualNicknameKey=foundKey.trim();orderedFields=[actualNicknameKey,...orderedFields.filter(f=>f.trim()!==actualNicknameKey)];break}}orderedFields.forEach(field=>{const th=document.createElement('th');th.textContent=field.trim();headerRow.appendChild(th)});teamPlayers.slice(0,5).forEach(player=>{const row=tableBody.insertRow();orderedFields.forEach(fieldKey=>{const cell=row.insertCell();const cleanFieldKey=fieldKey.trim();const cellValue=player[cleanFieldKey]!==undefined?player[cleanFieldKey]:'-';cell.textContent=cellValue;if(actualNicknameKey&&cleanFieldKey.toLowerCase()===actualNicknameKey.toLowerCase()){cell.classList.add('nickname-col')}})});wrapper.appendChild(table);return wrapper}function buildScoreboardTables(data){teamsContainer.innerHTML='';if(!data||!data.fields||data.fields.length===0){placeholder.textContent='Нет данных для отображения или поля не определены.';teamsContainer.style.display='none';return}teamsContainer.style.display='flex'; /* Стиль display:flex остается, но flex-direction управляется CSS */ placeholder.textContent='';const teamCtId='3';const teamTId='2';const teamCtName='Контр-Террористы';const teamTName='Террористы';let playersCT=[],playersT=[],otherPlayers=[];if(data.players&&data.players.length>0){data.players.forEach(player=>{const teamFieldValue=player['team']?String(player['team']).trim():null;if(teamFieldValue===teamCtId)playersCT.push(player);else if(teamFieldValue===teamTId)playersT.push(player);else otherPlayers.push(player)})}let displayedSomething=!1;
-/* Порядок добавления в JS (CT первыми) + CSS flex-direction: column = CT сверху, T снизу */
+</style></head><body><div class="content-wrapper"><h1>Таблица счета (Scoreboard)</h1><div class="scoreboard-teams-container" id="scoreboard-teams-container"></div><div id="scoreboard-placeholder" class="no-data">Загрузка данных таблицы счета...</div></div><div class="status-bar"><span id="status-text">Ожидание данных...</span><span id="loading-indicator" style="display:none;" class="loader"></span></div><script>const teamsContainer=document.getElementById('scoreboard-teams-container');const placeholder=document.getElementById('scoreboard-placeholder');const statusText=document.getElementById('status-text');const loadingIndicator=document.getElementById('loading-indicator');let isFetching=!1,errorCount=0;const MAX_ERRORS=5;
+
+/* --- Измененная функция createTeamTableElement --- */
+function createTeamTableElement(teamName,teamPlayers,fieldsToDisplay,teamClass){
+    const wrapper=document.createElement('div');
+    wrapper.className='team-table-wrapper';
+    const title=document.createElement('h2');
+    title.textContent=teamName;
+    wrapper.appendChild(title);
+    const table=document.createElement('table');
+    table.className='scoreboard '+teamClass;
+    const tableHead=table.createTHead();
+    const tableBody=table.createTBody();
+    const headerRow=tableHead.insertRow();
+
+    // Логика поиска поля никнейма
+    let orderedFields=[...fieldsToDisplay];
+    const nameKeys=['nickname','name','playername','имя','никнейм'];
+    let actualNicknameKey=null;
+    for(const key of nameKeys){
+        const foundKey=orderedFields.find(f=>f.trim().toLowerCase()===key.toLowerCase());
+        if(foundKey){
+            actualNicknameKey=foundKey.trim();
+            orderedFields=[actualNicknameKey,...orderedFields.filter(f=>f.trim().toLowerCase()!==actualNicknameKey.toLowerCase())];
+            break;
+        }
+    }
+
+    // Создаем заголовки, ПРОПУСКАЯ 'accountid'
+    orderedFields.forEach(field=>{
+        const cleanFieldKey = field.trim().toLowerCase();
+        if (cleanFieldKey !== 'accountid') { // <--- Пропускаем accountid
+            const th=document.createElement('th');
+            let headerText = field.trim();
+            // Заменяем заголовок для найденного поля ника
+            if (actualNicknameKey && cleanFieldKey === actualNicknameKey.toLowerCase()) {
+                 headerText = 'Игрок'; // Или 'Никнейм'
+            }
+            th.textContent = headerText;
+            headerRow.appendChild(th);
+        }
+    });
+
+    // Заполняем строки, ПРОПУСКАЯ 'accountid'
+    teamPlayers.slice(0,5).forEach(player=>{
+        const row=tableBody.insertRow();
+        orderedFields.forEach(fieldKey=>{
+            const cleanFieldKey = fieldKey.trim().toLowerCase();
+            if (cleanFieldKey !== 'accountid') { // <--- Пропускаем accountid
+                const cell=row.insertCell();
+                const cellValue=player[fieldKey.trim()]!==undefined?player[fieldKey.trim()]:'-';
+                cell.textContent=cellValue;
+                // Стилизация для ячейки с ником
+                if(actualNicknameKey && cleanFieldKey === actualNicknameKey.toLowerCase()){
+                    cell.classList.add('nickname-col');
+                }
+            }
+        });
+    });
+
+    wrapper.appendChild(table);
+    return wrapper;
+}
+/* --- Конец измененной функции ---*/
+
+// Остальной JavaScript без изменений
+function buildScoreboardTables(data){teamsContainer.innerHTML='';if(!data||!data.fields||data.fields.length===0){placeholder.textContent='Нет данных для отображения или поля не определены.';teamsContainer.style.display='none';return}teamsContainer.style.display='flex'; placeholder.textContent='';const teamCtId='3';const teamTId='2';const teamCtName='Контр-Террористы';const teamTName='Террористы';let playersCT=[],playersT=[],otherPlayers=[];if(data.players&&data.players.length>0){data.players.forEach(player=>{const teamFieldValue=player['team']?String(player['team']).trim():null;if(teamFieldValue===teamCtId)playersCT.push(player);else if(teamFieldValue===teamTId)playersT.push(player);else otherPlayers.push(player)})}let displayedSomething=!1;
 if(playersCT.length>0){teamsContainer.appendChild(createTeamTableElement(teamCtName,playersCT,data.fields,'team-ct'));displayedSomething=!0}
 if(playersT.length>0){teamsContainer.appendChild(createTeamTableElement(teamTName,playersT,data.fields,'team-t'));displayedSomething=!0}
 if(!displayedSomething&&otherPlayers.length>0){teamsContainer.appendChild(createTeamTableElement('Другие игроки',otherPlayers,data.fields,'team-other'));displayedSomething=!0}else if(!displayedSomething&&data.players&&data.players.length>0){teamsContainer.appendChild(createTeamTableElement('Игроки (команды не определены)',data.players,data.fields,'team-other'));displayedSomething=!0}if(!displayedSomething){placeholder.textContent='Нет данных об игроках в командах.'}}async function fetchScoreboardData(){if(isFetching||errorCount>=MAX_ERRORS)return;isFetching=!0;loadingIndicator.style.display='inline-block';try{const response=await fetch('/scoreboard_json');if(!response.ok)throw new Error('Ошибка сети: '+response.status);const scoreboardData=await response.json();buildScoreboardTables(scoreboardData);statusText.textContent='Обновлено: '+new Date().toLocaleTimeString();errorCount=0}catch(error){placeholder.textContent='Ошибка загрузки данных таблицы.';console.error(error);statusText.textContent='Ошибка: '+error.message+'. #'+(errorCount+1);errorCount++;if(errorCount>=MAX_ERRORS){statusText.textContent+=' Автообновление остановлено.';clearInterval(intervalId)}}finally{isFetching=!1;loadingIndicator.style.display='none'}}const intervalId=setInterval(fetchScoreboardData,7000);fetchScoreboardData();</script></body></html>"""
@@ -143,7 +209,6 @@ def receive_and_parse_logs_handler():
             log_lines = data.get('lines', [])
         else:
             app.logger.warning("Получен JSON, но ключ 'lines' отсутствует или не является списком.")
-            # Можно добавить обработку других структур JSON при необходимости
     else:
         raw_data = request.get_data(as_text=True)
         if raw_data:
@@ -170,11 +235,11 @@ def receive_and_parse_logs_handler():
         if chat_match:
             extracted_data = chat_match.groupdict()
             player_name_and_tags_str = extracted_data['player_name_and_tags']
-            # Извлекаем только имя перед тегами типа 
+            # Извлекаем только имя перед тегами
             name_match = re.search(r'^([^\<]+)', player_name_and_tags_str)
-            sender = html.escape(name_match.group(1).strip()) if name_match else html.escape(player_name_and_tags_str.strip()) # Запасной вариант, если regex не сработал
+            sender = html.escape(name_match.group(1).strip()) if name_match else html.escape(player_name_and_tags_str.strip())
             message = html.escape(extracted_data['message'].strip())
-            timestamp = extracted_data.get('timestamp', 'N/A') # Получаем временную метку, если есть
+            timestamp = extracted_data.get('timestamp', 'N/A')
 
             if not message: continue # Пропускаем пустые сообщения
 
@@ -211,8 +276,18 @@ def receive_and_parse_logs_handler():
             # Проверяем совпадение количества значений и полей
             if len(player_values) == len(current_scoreboard_data['fields']):
                 player_dict = dict(zip(current_scoreboard_data['fields'], player_values))
+
+                # !!! ВАЖНО: Здесь НЕ добавлена логика поиска и добавления никнейма.
+                # Это нужно реализовать, если вы хотите, чтобы никнеймы действительно
+                # отображались (см. объяснение в предыдущем ответе, Вариант 1).
+                # Пример (требует доработки под ваши логи):
+                # player_id = player_dict.get('accountid')
+                # nickname = get_nickname_from_some_mapping(player_id) # Функция, которую нужно создать
+                # if nickname:
+                #    player_dict['nickname'] = nickname # Добавляем поле для JS
+
                 temp_scoreboard_players.append(player_dict)
-                new_scoreboard_data_parsed = True # Отмечаем, что распарсили данные игрока в этой пачке
+                new_scoreboard_data_parsed = True
             else:
                 app.logger.warning(
                     f"Scoreboard: Несоответствие кол-ва значений игрока ({len(player_values)}) и полей ({len(current_scoreboard_data['fields'])}). "
@@ -228,14 +303,9 @@ def receive_and_parse_logs_handler():
         if new_chat_messages_count > 0:
              app.logger.info(f"Log Parser: Добавлено {new_chat_messages_count} сообщений чата.")
 
-    # Если мы распарсили новые данные игроков в этой пачке, добавляем их в основной список
     if temp_scoreboard_players:
-         # Примечание: текущая логика добавляет (extend). Если предполагается полное обновление
-         # при каждой пачке логов, возможно, нужно `current_scoreboard_data['players'] = temp_scoreboard_players`.
-         # Это зависит от того, как генерируются логи (полный снимок или отдельные строки).
-         # Судя по сбросу при получении 'fields', текущая логика добавления (extend) после сброса корректна.
          current_scoreboard_data['players'].extend(temp_scoreboard_players)
-         if new_scoreboard_data_parsed: # Логируем, только если реально добавили игроков в *этом* запуске
+         if new_scoreboard_data_parsed:
              app.logger.info(f"Scoreboard: Добавлено/обновлено {len(temp_scoreboard_players)} игроков.")
 
     return jsonify({
@@ -256,6 +326,8 @@ def get_raw_log_lines():
 @app.route('/scoreboard_json', methods=['GET'])
 def get_scoreboard_data():
     """Возвращает текущие данные таблицы счета (поля и игроки) в виде JSON."""
+    # ВАЖНО: Если вы реализовали добавление 'nickname' в `receive_and_parse_logs_handler`,
+    # убедитесь, что `current_scoreboard_data` содержит это поле перед отправкой.
     return jsonify(current_scoreboard_data)
 
 # --- HTML Page Routes ---
