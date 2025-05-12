@@ -55,67 +55,31 @@ HTML_TEMPLATE_MSG_ONLY = """
 HTML_TEMPLATE_LOG_ANALYZER = """
 <!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>CS2 Log Analyzer</title><style>.content-wrapper h1{margin-bottom:20px;}#log-analyzer-output{font-family:var(--font-mono);font-size:13px;line-height:1.6;flex-grow:1;overflow-y:auto;padding:10px;background-color:#181a1f;border-radius:6px;}.log-line{margin-bottom:3px;padding:2px 5px;border-radius:3px;white-space:pre-wrap;word-break:break-all;cursor:default;}.log-line.chat{background-color:#36485e;color:#a6e3a1;border-left:3px solid #a6e3a1;}.log-line.kill{background-color:#5c374f;color:#f38ba8;border-left:3px solid #f38ba8;}.log-line.damage{background-color:#6e584c;color:#fab387;}.log-line.grenade{background-color:#3e4b6e;color:#cba6f7;}.log-line.purchase{background-color:#2e535e;color:#89dceb;}.log-line.pickup{background-color:#3e5a6e;color:#94e2d5;}.log-line.connect{color:#a6e3a1;}.log-line.disconnect{color:#f38ba8;}.log-line.system{color:var(--text-muted);font-style:italic;}.log-line.unknown{color:var(--text-muted);opacity:0.8;}</style></head><body><div class="content-wrapper"><h1>Анализатор Логов CS2</h1><div id="log-analyzer-output">Загрузка логов...</div></div><div class="status-bar"><span id="status-text">Ожидание данных...</span><span id="loading-indicator" style="display:none;" class="loader"></span></div><script>const outputContainer=document.getElementById('log-analyzer-output');const statusText=document.getElementById('status-text');const loadingIndicator=document.getElementById('loading-indicator');let isFetching=!1,errorCount=0;const MAX_ERRORS=5;const chatRegex=/(\".+?\"<\d+><\[U:\d:\d+\]><\w+>)\s+(?:say|say_team)\s+\"([^\"]*)\"/i;const killRegex=/killed\s+\".+?\"<\d+>/i;const damageRegex=/attacked\s+\".+?\"<\d+><.+?>.*\(damage\s+\"\d+\"\)/i;const grenadeRegex=/threw\s+(hegrenade|flashbang|smokegrenade|molotov|decoy)/i;const connectRegex=/connected|entered the game/i;const disconnectRegex=/disconnected|left the game/i;const purchaseRegex=/purchased\s+\"(\w+)\"/i;const pickupRegex=/picked up\s+\"(\w+)\"/i;const teamSwitchRegex=/switched team to/i;const nameChangeRegex=/changed name to/i;function getLogLineInfo(line){if(chatRegex.test(line))return{type:'Чат',class:'chat'};if(killRegex.test(line))return{type:'Убийство',class:'kill'};if(damageRegex.test(line))return{type:'Урон',class:'damage'};if(grenadeRegex.test(line))return{type:'Граната',class:'grenade'};if(purchaseRegex.test(line))return{type:'Покупка',class:'purchase'};if(pickupRegex.test(line))return{type:'Подбор',class:'pickup'};if(connectRegex.test(line))return{type:'Подключение',class:'connect'};if(disconnectRegex.test(line))return{type:'Отключение',class:'disconnect'};if(teamSwitchRegex.test(line))return{type:'Смена команды',class:'system'};if(nameChangeRegex.test(line))return{type:'Смена ника',class:'system'};return{type:'Неизвестно/Система',class:'unknown'}}async function fetchAndAnalyzeLogs(){if(isFetching||errorCount>=MAX_ERRORS)return;isFetching=!0;loadingIndicator.style.display='inline-block';try{const response=await fetch('/raw_json');if(!response.ok)throw new Error(`Ошибка сети: ${response.status}`);const logLines=await response.json();const isScrolledToBottom=outputContainer.scrollTop+outputContainer.clientHeight>=outputContainer.scrollHeight-50;outputContainer.innerHTML='';if(logLines.length===0){outputContainer.textContent='Нет данных лога для анализа.'}else{logLines.forEach(line=>{const info=getLogLineInfo(line);const lineDiv=document.createElement('div');lineDiv.className=`log-line ${info.class}`;lineDiv.textContent=line;lineDiv.title=`Тип: ${info.type}`;outputContainer.appendChild(lineDiv)})}if(isScrolledToBottom){setTimeout(()=>{outputContainer.scrollTop=outputContainer.scrollHeight},0)}statusText.textContent=`Обновлено: ${new Date().toLocaleTimeString()} (${logLines.length} строк)`;errorCount=0}catch(error){outputContainer.textContent='Ошибка загрузки или анализа логов.';console.error(error);statusText.textContent=`Ошибка: ${error.message}. #${errorCount+1}`;errorCount++;if(errorCount>=MAX_ERRORS){statusText.textContent+=' Автообновление остановлено.';clearInterval(intervalId)}}finally{isFetching=!1;loadingIndicator.style.display='none'}}const intervalId=setInterval(fetchAndAnalyzeLogs,5000);fetchAndAnalyzeLogs();</script></body></html>
 """
-# --- НОВЫЙ HTML Шаблон для страницы ТАБЛИЦЫ СЧЕТА (/scoreboard_viewer) ---
 HTML_TEMPLATE_SCOREBOARD = """
 <!DOCTYPE html>
 <html lang="ru">
 <head><meta charset="UTF-8"><title>CS2 Scoreboard</title>
     <style>
         .content-wrapper h1 { margin-bottom: 20px; }
-        .scoreboard-teams-container { /* Новый контейнер для двух таблиц */
-            display: flex;
-            justify-content: space-between; /* Размещаем таблицы по бокам */
-            gap: 20px; /* Расстояние между таблицами */
-            flex-wrap: wrap; /* Перенос, если не хватает места */
-        }
-        .team-table-wrapper {
-            flex: 1; /* Занимают равное доступное пространство */
-            min-width: 45%; /* Минимальная ширина для каждой таблицы */
-        }
-        .team-table-wrapper h2 { /* Заголовок для каждой команды */
-            text-align: center;
-            color: var(--text-muted);
-            font-size: 1.2em;
-            margin-bottom: 10px;
-        }
-        table.scoreboard {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.85em; /* Немного уменьшим шрифт для компактности */
-            font-family: var(--font-mono);
-        }
-        .scoreboard th, .scoreboard td {
-            border: 1px solid var(--container-border);
-            padding: 6px 8px; /* Уменьшим padding */
-            text-align: left;
-            white-space: nowrap;
-        }
-        .scoreboard thead th {
-            background-color: #2c313a;
-            color: var(--accent-color-1);
-            position: sticky;
-            top: 0;
-            z-index: 1;
-        }
-        /* Цвета команд (примеры) */
-        .team-ct tbody tr { background-color: rgba(137, 180, 250, 0.1); /* Светло-синий фон для CT */ }
-        .team-t tbody tr { background-color: rgba(250, 173, 137, 0.1); /* Светло-оранжевый фон для T */ }
-
-        .team-ct thead th { background-color: #3a5a8a; } /* Темно-синий для заголовка CT */
-        .team-t thead th { background-color: #8a5a3a; } /* Темно-оранжевый для заголовка T */
-        
-        .scoreboard tbody tr:hover {
-            background-color: var(--link-hover-bg);
-        }
+        .scoreboard-container {width: 100%;overflow-x: auto;}
+        table.scoreboard {width: 100%;border-collapse: collapse;font-size: 0.9em;font-family: var(--font-mono);}
+        .scoreboard th, .scoreboard td {border: 1px solid var(--container-border);padding: 8px 10px;text-align: left;white-space: nowrap;}
+        .scoreboard thead th {background-color: #2c313a;color: var(--accent-color-1);position: sticky;top: 0;z-index: 1;}
+        .scoreboard tbody tr:nth-child(even) {background-color: #2a2e37;}
+        .scoreboard tbody tr:hover {background-color: var(--link-hover-bg);}
         .no-data { text-align: center; padding: 20px; color: var(--text-muted); }
     </style>
 </head>
 <body>
     <div class="content-wrapper">
         <h1>Таблица счета (Scoreboard)</h1>
-        <div class="scoreboard-teams-container" id="scoreboard-teams-container">
-            </div>
-        <div id="scoreboard-placeholder" class="no-data">Загрузка данных таблицы счета...</div>
+        <div class="scoreboard-container">
+            <table class="scoreboard" id="scoreboard-table">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+            <div id="scoreboard-placeholder" class="no-data">Загрузка данных таблицы счета...</div>
+        </div>
     </div>
     <div class="status-bar">
         <span id="status-text">Ожидание данных...</span>
@@ -123,95 +87,36 @@ HTML_TEMPLATE_SCOREBOARD = """
     </div>
 
     <script>
-        const teamsContainer = document.getElementById('scoreboard-teams-container');
+        const table = document.getElementById('scoreboard-table');
+        const tableHead = table.querySelector('thead');
+        const tableBody = table.querySelector('tbody');
         const placeholder = document.getElementById('scoreboard-placeholder');
         const statusText = document.getElementById('status-text');
         const loadingIndicator = document.getElementById('loading-indicator');
         let isFetching = false, errorCount = 0; const MAX_ERRORS = 5;
 
-        // Функция для создания и заполнения таблицы для одной команды
-        function createTeamTable(teamId, teamName, teamPlayers, fields, teamClass) {
-            const wrapper = document.createElement('div');
-            wrapper.className = 'team-table-wrapper';
-
-            const title = document.createElement('h2');
-            title.textContent = teamName;
-            wrapper.appendChild(title);
-
-            const table = document.createElement('table');
-            table.className = `scoreboard ${teamClass}`; // Класс для стилизации команды
-            const tableHead = table.createTHead();
-            const tableBody = table.createTBody();
-
-            // Строим заголовок
-            const headerRow = tableHead.insertRow();
-            fields.forEach(field => {
-                const th = document.createElement('th');
-                th.textContent = field.trim();
-                headerRow.appendChild(th);
-            });
-
-            // Строим ряды с данными игроков (максимум 5)
-            teamPlayers.slice(0, 5).forEach(player => {
-                const row = tableBody.insertRow();
-                fields.forEach(fieldKey => {
-                    const cell = row.insertCell();
-                    cell.textContent = player[fieldKey.trim()] !== undefined ? player[fieldKey.trim()] : '-';
-                });
-            });
-            
-            wrapper.appendChild(table);
-            return wrapper;
-        }
-
-        function buildScoreboard(data) {
-            teamsContainer.innerHTML = ''; // Очищаем контейнер команд
-
+        function buildTable(data) {
+            tableHead.innerHTML = ''; tableBody.innerHTML = '';
             if (!data || !data.fields || data.fields.length === 0) {
-                placeholder.textContent = 'Нет данных для отображения.';
-                teamsContainer.style.display = 'none';
-                return;
+                placeholder.textContent = 'Нет данных для отображения.'; table.style.display = 'none'; return;
             }
-            teamsContainer.style.display = 'flex'; // Показываем контейнер
-            placeholder.textContent = '';
-
-            // Предполагаем, что поле 'team' содержит идентификатор команды
-            // И что у вас есть поле 'nickname' для никнеймов
-            // Вам нужно будет адаптировать ID команд и их имена
-            const team1Id = '2'; // Пример ID для Террористов
-            const team2Id = '3'; // Пример ID для Контр-Террористов
-            // (или другие значения, которые приходят в поле 'team')
-
-            let playersTeam1 = [];
-            let playersTeam2 = [];
-            let otherPlayers = []; // Для игроков без определенной команды или если команд больше двух
-
+            table.style.display = ''; placeholder.textContent = '';
+            const headerRow = tableHead.insertRow();
+            data.fields.forEach(field => {
+                const th = document.createElement('th'); th.textContent = field.trim(); headerRow.appendChild(th);
+            });
             if (data.players && data.players.length > 0) {
                 data.players.forEach(player => {
-                    const teamFieldValue = player['team'] ? player['team'].trim() : null; // Получаем значение поля 'team'
-                    if (teamFieldValue === team1Id) {
-                        playersTeam1.push(player);
-                    } else if (teamFieldValue === team2Id) {
-                        playersTeam2.push(player);
-                    } else {
-                        otherPlayers.push(player); // Если команда не определена или другая
-                    }
+                    const row = tableBody.insertRow();
+                    data.fields.forEach(fieldKey => {
+                        const cell = row.insertCell();
+                        cell.textContent = player[fieldKey.trim()] !== undefined ? player[fieldKey.trim()] : '-';
+                    });
                 });
-            }
-            
-            // Создаем и добавляем таблицы для команд
-            if (playersTeam1.length > 0 || playersTeam2.length > 0) {
-                 // Можно сортировать игроков внутри команд, например, по 'kills'
-                // playersTeam1.sort((a, b) => parseInt(b.kills || 0) - parseInt(a.kills || 0));
-                // playersTeam2.sort((a, b) => parseInt(b.kills || 0) - parseInt(a.kills || 0));
-
-                teamsContainer.appendChild(createTeamTable(team1Id, 'Команда 1 (например, T)', playersTeam1, data.fields, 'team-t'));
-                teamsContainer.appendChild(createTeamTable(team2Id, 'Команда 2 (например, CT)', playersTeam2, data.fields, 'team-ct'));
             } else {
-                 placeholder.textContent = 'Нет данных об игроках в командах.';
+                const row = tableBody.insertRow(); const cell = row.insertCell();
+                cell.colSpan = data.fields.length; cell.textContent = "Нет данных об игроках."; cell.style.textAlign = "center";
             }
-
-            // Можно также отобразить 'otherPlayers', если они есть
         }
 
         async function fetchScoreboardData() {
@@ -219,25 +124,24 @@ HTML_TEMPLATE_SCOREBOARD = """
             isFetching = true; loadingIndicator.style.display = 'inline-block';
             try {
                 const response = await fetch('/scoreboard_json');
-                if (!response.ok) throw new Error(\`Ошибка сети: \${response.status}\`);
+                if (!response.ok) throw new Error(`Ошибка сети: ${response.status}`);
                 const scoreboardData = await response.json();
-                buildScoreboard(scoreboardData); // Вызываем новую функцию для построения
-                statusText.textContent = \`Обновлено: \${new Date().toLocaleTimeString()}\`; errorCount = 0;
+                buildTable(scoreboardData);
+                statusText.textContent = `Обновлено: ${new Date().toLocaleTimeString()}`; errorCount = 0;
             } catch (error) {
                 placeholder.textContent = 'Ошибка загрузки данных таблицы.'; console.error(error);
-                statusText.textContent = \`Ошибка: \${error.message}. #\${errorCount+1}\`; errorCount++;
+                statusText.textContent = `Ошибка: ${error.message}. #${errorCount+1}`; errorCount++;
                 if (errorCount >= MAX_ERRORS) { statusText.textContent += ' Автообновление остановлено.'; clearInterval(intervalId); }
             } finally {
                 isFetching = false; loadingIndicator.style.display = 'none';
             }
         }
-        const intervalId = setInterval(fetchScoreboardData, 7000); // Обновляем чуть реже
+        const intervalId = setInterval(fetchScoreboardData, 10000);
         fetchScoreboardData();
     </script>
 </body>
 </html>
 """
-# ----------------------------------
 
 @app.route('/submit_logs', methods=['POST'])
 @app.route('/gsi', methods=['POST'])
