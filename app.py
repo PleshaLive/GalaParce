@@ -1,4 +1,4 @@
-# Файл: app.py (Версия без f-string для HTML, исправлены ошибки Pylance)
+# Файл: app.py (Финальная версия со всеми исправлениями и улучшениями)
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import logging
@@ -12,24 +12,34 @@ import json
 app = Flask(__name__)
 CORS(app)
 
+# Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 
 # --- Хранилища данных ---
-MAX_CHAT_MESSAGES = 100
-MAX_RAW_LOGS = 250
-chat_messages = deque(maxlen=MAX_CHAT_MESSAGES)
-raw_log_lines = deque(maxlen=MAX_RAW_LOGS)
+MAX_CHAT_MESSAGES = 100 # Макс. кол-во обработанных сообщений чата
+MAX_RAW_LOGS = 250      # Макс. кол-во хранимых сырых строк лога
+chat_messages = deque(maxlen=MAX_CHAT_MESSAGES) # Очередь для обработанных сообщений чата (словари)
+raw_log_lines = deque(maxlen=MAX_RAW_LOGS)      # Очередь для последних полученных сырых строк лога
 # -------------------------
 
 # --- Regex для парсинга чата ---
+# Ищет строки формата: ВРЕМЯ - "Ник<id><SteamID><Team>" say "Сообщение" (или say_team)
 CHAT_REGEX_SAY = re.compile(
-    r"""^\s*(?P<timestamp>\d{2}:\d{2}\.\d{3})\s+-\s+(?P<player_info>\".+?\"<\d+><\[U:\d:\d+\]><\w+>)\s+(?:say|say_team)\s+\"(?P<message>[^\"]*)\"\s*$""",
-    re.VERBOSE | re.IGNORECASE
+    r"""
+    ^\s* # Начало строки
+    (?P<timestamp>\d{2}:\d{2}\.\d{3})\s+-\s+ # Захват времени (ЧЧ:ММ.мс) и разделителя ' - '
+    (?P<player_info>\".+?\"<\d+><\[U:\d:\d+\]><\w+>) # Захват полной информации об игроке в кавычках и <>
+    \s+ # Пробел
+    (?:say|say_team) # Ищем слово 'say' или 'say_team' (без захвата)
+    \s+ # Пробел
+    \"(?P<message>[^\"]*)\" # Захватываем текст сообщения в кавычках
+    \s*$ # Конец строки
+    """,
+    re.VERBOSE | re.IGNORECASE # VERBOSE для комментариев, IGNORECASE для say/say_team
 )
 # -------------------------------------------
 
-# --- Общие CSS и HTML для Навигации (Обычная строка) ---
-# BASE_CSS остается как есть, т.к. не содержит конфликтующих конструкций
+# --- Общие CSS переменные и базовые стили ---
 BASE_CSS = """
 <style>
     :root{--bg-color:#1a1d24;--container-bg:#232730;--container-border:#3b4048;--text-color:#cdd6f4;--text-muted:#a6adc8;--accent-color-1:#89b4fa;--accent-color-2:#a6e3a1;--link-color:var(--accent-color-2);--link-hover-bg:#3e4451;--error-color:#f38ba8;--header-color:var(--accent-color-1);--scrollbar-bg:#313244;--scrollbar-thumb:#585b70;--font-primary:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;--font-mono:'Consolas','Courier New',monospace;}
@@ -39,6 +49,8 @@ BASE_CSS = """
     .status-bar{text-align:center;font-size:0.9em;color:var(--text-muted);padding:15px 0 5px 0;height:20px;}.status-bar .loader{border:3px solid var(--container-border);border-radius:50%;border-top:3px solid var(--accent-color-1);width:14px;height:14px;animation:spin 1s linear infinite;display:inline-block;margin-left:8px;vertical-align:middle;}@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}
 </style>
 """
+
+# --- HTML для Навигации ---
 NAV_HTML = """
 <nav class="navigation">
     <a href="/">Полный чат</a>
@@ -50,7 +62,7 @@ NAV_HTML = """
 """
 # ----------------------------------
 
-# --- HTML Шаблон для ГЛАВНОЙ страницы (/) (Обычная строка) ---
+# --- HTML Шаблон для ГЛАВНОЙ страницы (/) ---
 HTML_TEMPLATE_MAIN = """
 <!DOCTYPE html>
 <html lang="ru">
@@ -89,7 +101,6 @@ HTML_TEMPLATE_MAIN = """
 
             try {
                 const response = await fetch('/chat');
-                // ТЕПЕРЬ ${...} РАБОТАЕТ КАК ОБЫЧНЫЙ JS, без экранирования
                 if (!response.ok) throw new Error(`Ошибка сети: ${response.status}`);
                 const messages = await response.json();
                 const isScrolledToBottom = chatContainer.scrollTop + chatContainer.clientHeight >= chatContainer.scrollHeight - 30;
@@ -112,7 +123,6 @@ HTML_TEMPLATE_MAIN = """
                 statusText.textContent = `Обновлено: ${new Date().toLocaleTimeString()}`; errorCount = 0;
             } catch (error) {
                 console.error('Ошибка:', error);
-                 // ТЕПЕРЬ ${...} РАБОТАЕТ КАК ОБЫЧНЫЙ JS, без экранирования
                 statusText.textContent = `Ошибка: ${error.message}. #${errorCount+1}`;
                 errorCount++;
                 if (errorCount >= MAX_ERRORS) { statusText.textContent += ' Автообновление остановлено.'; clearInterval(intervalId); }
@@ -128,7 +138,7 @@ HTML_TEMPLATE_MAIN = """
 """
 # ----------------------------------
 
-# --- HTML Шаблон для страницы ТОЛЬКО с ТЕКСТОМ сообщений (/messages_only) (Обычная строка) ---
+# --- HTML Шаблон для страницы ТОЛЬКО с ТЕКСТОМ сообщений (/messages_only) ---
 HTML_TEMPLATE_MSG_ONLY = """
 <!DOCTYPE html>
 <html lang="ru">
@@ -159,7 +169,7 @@ HTML_TEMPLATE_MSG_ONLY = """
 """
 # ----------------------------------
 
-# --- HTML Шаблон для страницы с СЫРЫМИ ЛОГАМИ (/raw_log_viewer) (Обычная строка) ---
+# --- HTML Шаблон для страницы с СЫРЫМИ ЛОГАМИ (/raw_log_viewer) ---
 HTML_TEMPLATE_RAW_LOGS = """
 <!DOCTYPE html>
 <html lang="ru">
@@ -192,7 +202,6 @@ HTML_TEMPLATE_RAW_LOGS = """
 # --- Эндпоинты Flask ---
 
 # Эндпоинт для приема строк лога (/submit_logs и /gsi)
-# (Этот код не менялся)
 @app.route('/submit_logs', methods=['POST'])
 @app.route('/gsi', methods=['POST'])
 def receive_and_parse_logs_handler():
@@ -206,14 +215,14 @@ def receive_and_parse_logs_handler():
     if not log_lines: return jsonify({"status": "error", "message": "No lines provided"}), 400
     app.logger.info(f"Log Parser: Получено {len(log_lines)} строк лога.")
 
-    if log_lines: raw_log_lines.extend(log_lines)
+    if log_lines: raw_log_lines.extend(log_lines) # Сохраняем сырые логи
 
     new_messages_found_count = 0; parsed_messages_batch = []
     current_time = datetime.datetime.now(datetime.timezone.utc)
 
     for line in log_lines:
         if not line: continue
-        match = CHAT_REGEX_SAY.search(line)
+        match = CHAT_REGEX_SAY.search(line) # Ищем только строки чата 'say'/'say_team'
         if match:
             extracted_data = match.groupdict()
             player_info_str = extracted_data['player_info']
@@ -221,52 +230,49 @@ def receive_and_parse_logs_handler():
             sender = html.escape(name_match.group(1).strip()) if name_match else html.escape(player_info_str.strip())
             message = html.escape(extracted_data['message'].strip())
             timestamp = extracted_data.get('timestamp', current_time.strftime('%H:%M:%S.%f')[:-3])
-            if not message: continue
+            if not message: continue # Пропускаем пустые сообщения
             message_obj = {"ts": timestamp, "sender": sender, "msg": message}
             parsed_messages_batch.append(message_obj)
             new_messages_found_count += 1
 
     if parsed_messages_batch:
-         chat_messages.extend(parsed_messages_batch)
+         chat_messages.extend(parsed_messages_batch) # Добавляем только сообщения чата
          app.logger.info(f"Log Parser: Добавлено {new_messages_found_count} новых ЧАТ сообщений. Всего: {len(chat_messages)}")
 
     return jsonify({"status": "success", "message": f"Обработано {len(log_lines)} строк, найдено {new_messages_found_count} чат сообщений"}), 200
 
 # Эндпоинт, возвращающий ТОЛЬКО структурированные СООБЩЕНИЯ ЧАТА
-# (Этот код не менялся)
 @app.route('/chat', methods=['GET'])
 def get_structured_chat_data():
     return jsonify(list(chat_messages))
 
 # Эндпоинт, возвращающий СЫРЫЕ СТРОКИ ЛОГА
-# (Этот код не менялся)
 @app.route('/raw_json', methods=['GET'])
 def get_raw_log_lines():
     return jsonify(list(raw_log_lines))
 
 # Эндпоинт для главной страницы (/)
-# ИЗМЕНЕНО: Используем конкатенацию для вставки HTML
 @app.route('/', methods=['GET'])
 def index():
-    full_html = BASE_CSS + NAV_HTML + HTML_TEMPLATE_MAIN # Собираем полный HTML
+    # Собираем полный HTML из базовых стилей, навигации и основного шаблона
+    full_html = BASE_CSS + NAV_HTML + HTML_TEMPLATE_MAIN
     return Response(full_html, mimetype='text/html')
 
 # Эндпоинт для страницы только с текстом сообщений (/messages_only)
-# ИЗМЕНЕНО: Используем конкатенацию для вставки HTML
 @app.route('/messages_only', methods=['GET'])
 def messages_only_page():
-    full_html = BASE_CSS + NAV_HTML + HTML_TEMPLATE_MSG_ONLY # Собираем полный HTML
+    # Собираем полный HTML из базовых стилей, навигации и шаблона для сообщений
+    full_html = BASE_CSS + NAV_HTML + HTML_TEMPLATE_MSG_ONLY
     return Response(full_html, mimetype='text/html')
 
 # Эндпоинт для страницы отображения СЫРЫХ ЛОГОВ
-# ИЗМЕНЕНО: Используем конкатенацию для вставки HTML
 @app.route('/raw_log_viewer', methods=['GET'])
 def raw_log_viewer_page():
-    full_html = BASE_CSS + NAV_HTML + HTML_TEMPLATE_RAW_LOGS # Собираем полный HTML
+    # Собираем полный HTML из базовых стилей, навигации и шаблона для логов
+    full_html = BASE_CSS + NAV_HTML + HTML_TEMPLATE_RAW_LOGS
     return Response(full_html, mimetype='text/html')
 
 # --- Запуск приложения ---
-# (Этот код не менялся)
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False) # debug=False для Railway
