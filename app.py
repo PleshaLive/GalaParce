@@ -1,4 +1,4 @@
-# Файл: app.py (Версия с улучшенной фильтрацией логов)
+# Файл: app.py (Версия с точным Regex для 'say')
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
 import logging
@@ -18,29 +18,23 @@ MAX_MESSAGES = 100
 chat_messages = deque(maxlen=MAX_MESSAGES)
 # Структура сообщения: {'ts': 'ЧЧ:ММ:СС', 'sender': 'Отправитель', 'msg': 'Текст'}
 
-# --- Регулярное выражение (оставляем относительно простым) ---
-# Находит строки вида "что-то : остальное"
-CHAT_LOG_REGEX = re.compile(
-    r"^\s*(?:\*DEAD\*\s+)?(?P<sender>[^:@]+?)(?:\s*@\s*(?P<team>\w+))?\s*:\s*(?P<message>.+)\s*$",
-    re.IGNORECASE
+# --- НОВЫЙ, БОЛЕЕ ТОЧНЫЙ REGEX ---
+# Ищет строки формата: ВРЕМЯ - "Ник<id><SteamID><Team>" say "Сообщение"
+# или                     ВРЕМЯ - "Ник<id><SteamID><Team>" say_team "Сообщение"
+CHAT_REGEX_SAY = re.compile(
+    r"""
+    ^\s* # Начало строки
+    (?P<timestamp>\d{2}:\d{2}\.\d{3})\s+-\s+ # Захват времени (ЧЧ:ММ.мс) и разделителя ' - '
+    (?P<player_info>\".+?\"<\d+><\[U:\d:\d+\]><\w+>) # Захват полной информации об игроке в кавычках и <>
+    \s+ # Пробел
+    (?:say|say_team) # Ищем слово 'say' или 'say_team' (без захвата)
+    \s+ # Пробел
+    \"(?P<message>[^\"]*)\" # Захватываем текст сообщения в кавычках
+    \s*$ # Конец строки
+    """,
+    re.VERBOSE | re.IGNORECASE # VERBOSE для комментариев, IGNORECASE для say/say_team
 )
-# -------------------------------------------
-
-# --- Список индикаторов, что строка НЕ является сообщением чата ---
-# Дополняйте этот список по мере необходимости, анализируя ваши логи
-NON_CHAT_INDICATORS = [
-    # Ключевые слова событий
-    " attacked ", " killed ", " picked up ", " purchased ", " money change ", " left buyzone",
-    " connected", " disconnected", " entered the game", " switched team",
-    " assist", " changed name to ",
-    # Системные сообщения и префиксы
-    " SFUI_Notice", " Loading screen", "Player:", "Console:", "Server:",
-    " game event ", " log message ", " console output:",
-    "->", # Часто используется для команд или ответов консоли
-    # Другие возможные фрагменты не-чатовых сообщений
-    " world triggered ", " redeemed ", " item status: ", " weapon swap:"
-]
-# --------------------------------------------------------------
+# ------------------------------------
 
 # --- HTML Шаблоны (остаются без изменений) ---
 NAV_HTML = """<style>.navigation{text-align: center;padding: 10px 0;margin-bottom: 15px;background-color: #3b4048;border-radius: 5px;}.navigation a{color: #98c379;text-decoration: none;margin: 0 10px;padding: 5px 8px;border-radius: 4px;transition: background-color 0.2s ease;font-size: 0.95em;}.navigation a:hover,.navigation a:focus{background-color: #4a505a;text-decoration: underline;outline: none;}</style><div class="navigation"><a href="/">Полный чат</a> | <a href="/messages_only">Только сообщения</a> | <a href="/raw_chat_json">Показать JSON</a></div>"""
@@ -58,7 +52,7 @@ HTML_TEMPLATE_RAW_JSON = f"""<!DOCTYPE html><html lang="ru"><head><meta charset=
 def receive_and_parse_logs_handler():
     global chat_messages
     log_lines = []
-    # Код получения log_lines из request
+    # Код получения log_lines из request (без изменений)
     if request.is_json:
         data = request.get_json(); log_lines = data.get('lines', []) if isinstance(data.get('lines'), list) else []
     else:
@@ -69,46 +63,42 @@ def receive_and_parse_logs_handler():
 
     new_messages_found_count = 0
     parsed_messages_batch = []
-    current_time = datetime.datetime.now(datetime.timezone.utc)
 
     # Обработка каждой строки лога
     for line in log_lines:
         if not line: continue
 
-        match = CHAT_LOG_REGEX.search(line) # Шаг 1: Ищем совпадение по Regex
+        # ИСПОЛЬЗУЕМ НОВЫЙ ТОЧНЫЙ REGEX
+        match = CHAT_REGEX_SAY.search(line)
         if match:
-            # Найдено потенциальное сообщение. Теперь Шаг 2: Фильтрация.
-            is_likely_game_event = False
-            line_lower = line.lower() # Для регистронезависимого поиска индикаторов
+            # Если строка точно соответствует формату чата "say"
+            extracted_data = match.groupdict()
 
-            for indicator in NON_CHAT_INDICATORS:
-                # Ищем индикатор в строке лога
-                if indicator.lower() in line_lower:
-                    is_likely_game_event = True
-                    app.logger.debug(f"Log Filter: Отфильтрована строка '{line}' из-за индикатора '{indicator}'")
-                    break # Нашли индикатор события, дальше проверять не нужно
+            # Извлекаем имя игрока из полной информации
+            player_info_str = extracted_data['player_info']
+            name_match = re.search(r'^\"(.*?)\"', player_info_str) # Ищем имя в кавычках в начале
+            sender = html.escape(name_match.group(1).strip()) if name_match else html.escape(player_info_str.strip()) # Берем имя или всю строку как fallback
 
-            # Если строка НЕ была отфильтрована как событие:
-            if not is_likely_game_event:
-                extracted_data = match.groupdict()
-                sender = html.escape(extracted_data['sender'].strip())
-                message = html.escape(extracted_data['message'].strip())
+            message = html.escape(extracted_data['message'].strip()) # Текст сообщения
+            timestamp = extracted_data.get('timestamp', datetime.datetime.now(datetime.timezone.utc).strftime('%H:%M:%S.%f')[:-3]) # Время из лога
 
-                # Дополнительная проверка на случай очень длинных сообщений (возможно, ошибка парсинга)
-                if len(message) > 500: # Максимальная длина сообщения чата (настройте при необходимости)
-                    app.logger.warning(f"Log Filter: Пропущено потенциально неверно отпарсенное длинное сообщение: {message[:100]}...")
-                    continue
+            # Пропускаем пустые сообщения, если такие вдруг попадутся
+            if not message:
+                app.logger.debug(f"Log Parser: Пропущено пустое сообщение от {sender}")
+                continue
 
-                # Создаем объект сообщения
-                message_obj = {
-                    "ts": current_time.strftime('%H:%M:%S'),
-                    "sender": sender,
-                    "msg": message
-                }
-                parsed_messages_batch.append(message_obj)
-                new_messages_found_count += 1
-                # Логируем успешно распознанное сообщение чата (можно закомментировать для уменьшения логов)
-                # app.logger.info(f"Log Parser: Распознано ЧАТ сообщение: [{message_obj['ts']}] {sender}: {message}")
+            # Создаем объект сообщения
+            message_obj = {
+                "ts": timestamp,
+                "sender": sender,
+                "msg": message
+            }
+            parsed_messages_batch.append(message_obj)
+            new_messages_found_count += 1
+            app.logger.info(f"Log Parser: Распознано ЧАТ сообщение: [{timestamp}] {sender}: {message}")
+        # else:
+            # Строка не совпала с CHAT_REGEX_SAY, логируем ее как не-чат (для отладки)
+            # app.logger.debug(f"Log Parser: Строка не является 'say' чатом: '{line}'")
 
     # Добавляем найденные сообщения в общую очередь
     if parsed_messages_batch:
