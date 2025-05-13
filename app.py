@@ -15,7 +15,8 @@ CORS(app)
 
 # --- Logging Configuration ---
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(levelname)s: %(message)s')
+logger = logging.getLogger(__name__) 
 
 # --- Data Storage ---
 MAX_CHAT_MESSAGES = 100
@@ -54,7 +55,108 @@ PLAYER_INFO_REGEX = re.compile(
 player_nickname_map = {} 
 # ----------------------------------------------
 
+# Глобальные переменные для сборки JSON-блока между POST-запросами
+temp_json_lines_buffer = []
+is_capturing_json_block = False
+
+# --- Вспомогательные функции ---
+def strip_log_prefix(log_line_content):
+    """
+    Удаляет стандартный префикс даты/времени из строки лога.
+    """
+    match_prefix = re.match(r"^(?:\s*(?:\d{2}\/\d{2}\/\d{4}\s+-\s+)?(?:\d{2}:\d{2}:\d{2}\.\d{3}\s+-\s+)?)(.*)$", log_line_content)
+    return (match_prefix.group(1) if match_prefix else log_line_content).strip()
+
+def process_json_scoreboard_data(json_lines_list_buffer):
+    """
+    Парсит собранный JSON-блок и обновляет current_scoreboard_data.
+    """
+    global current_scoreboard_data, player_nickname_map
+    if not json_lines_list_buffer:
+        logger.warning("process_json_scoreboard_data вызван с пустым буфером строк.")
+        return False
+
+    raw_json_str = "".join(json_lines_list_buffer)
+    json_to_parse = re.sub(r',\s*([\}\]])', r'\1', raw_json_str) 
+    
+    logger.debug(f"Попытка парсинга JSON для scoreboard (длина {len(json_to_parse)}). Начало: {json_to_parse[:1000]}...")
+    try:
+        scoreboard_payload = json.loads(json_to_parse)
+        logger.info("УСПЕХ: JSON-блок scoreboard распарсен.")
+
+        log_fields_str = scoreboard_payload.get("fields")
+        log_players_dict_from_json = scoreboard_payload.get("players") 
+
+        if not isinstance(log_fields_str, str) or not log_fields_str.strip():
+            logger.warning("Scoreboard JSON ОШИБКА: 'fields' отсутствуют, пустые или не являются строкой.")
+            return False
+
+        if not isinstance(log_players_dict_from_json, dict):
+            logger.warning("Scoreboard JSON ОШИБКА: 'players' отсутствуют или не являются словарем.")
+            return False
+
+        original_fields_from_log = [f.strip() for f in log_fields_str.split(',') if f.strip()]
+        if not original_fields_from_log:
+            logger.warning("Scoreboard JSON ОШИБКА: Список original_fields_from_log пуст после парсинга строки fields.")
+            return False
+        logger.info(f"Scoreboard JSON: Оригинальные поля из лога ({len(original_fields_from_log)}): {original_fields_from_log}")
+
+        display_fields = ['nickname']
+        original_accountid_cased = None
+        has_accountid_in_original = False
+
+        for f_val in original_fields_from_log:
+            if f_val.lower() == 'accountid':
+                original_accountid_cased = f_val 
+                has_accountid_in_original = True
+            if f_val.lower() not in ['nickname', 'accountid']:
+                display_fields.append(f_val)
+        
+        if has_accountid_in_original and original_accountid_cased: 
+            display_fields.append(original_accountid_cased)
+        elif has_accountid_in_original: 
+             display_fields.append('accountid') 
+        
+        current_scoreboard_data['fields'] = display_fields
+        new_players_list = []
+
+        logger.info(f"Scoreboard JSON: Игроков в JSON объекте от сервера: {len(log_players_dict_from_json)}")
+        for player_log_key, player_values_str_log in log_players_dict_from_json.items():
+            if not isinstance(player_values_str_log, str):
+                logger.warning(f"Scoreboard JSON: Данные для игрока '{player_log_key}' не являются строкой: {player_values_str_log}")
+                continue
+                
+            player_values_list = [v.strip() for v in player_values_str_log.split(',')]
+            
+            if len(player_values_list) == len(original_fields_from_log):
+                player_dict_temp = dict(zip(original_fields_from_log, player_values_list))
+                acc_id_val = player_dict_temp.get('accountid')
+                
+                if acc_id_val and acc_id_val.strip() and acc_id_val.strip() != "0":
+                    nick = player_nickname_map.get(acc_id_val, f"ID:{acc_id_val}")
+                    player_dict_temp['nickname'] = nick
+                else:
+                    player_name_from_stats = player_dict_temp.get('name', 'Spectator/Bot') 
+                    player_dict_temp['nickname'] = player_name_from_stats if ((not acc_id_val or acc_id_val == "0") and player_name_from_stats != 'Spectator/Bot') else 'Spectator/Bot'
+                
+                new_players_list.append(player_dict_temp)
+                logger.debug(f"Scoreboard JSON: Добавлен игрок: {player_dict_temp.get('nickname')}")
+            else:
+                logger.warning(f"Scoreboard JSON ОШИБКА ДЛИН: Игрок '{player_log_key}': получено значений ({len(player_values_list)}) [{player_values_list}], ожидалось по original_fields_from_log ({len(original_fields_from_log)}) [{original_fields_from_log}]. Строка значений: '{player_values_str_log}'")
+        
+        current_scoreboard_data['players'] = new_players_list
+        logger.info(f"Scoreboard успешно обновлен из JSON. DisplayFields: {current_scoreboard_data['fields']}, Игроков: {len(current_scoreboard_data['players'])}")
+        return True
+
+    except json.JSONDecodeError as e:
+        logger.error(f"JSONDecodeError для scoreboard: {e}. Данные (первые 1000 симв): '{json_to_parse[:1000]}...'")
+    except Exception as e:
+        logger.error(f"Непредвиденная ошибка при обработке JSON scoreboard: {e}", exc_info=True)
+    return False
+# -----------------------------
+
 # --- Base CSS and Navigation HTML ---
+# ... (остаются без изменений, как в предыдущем полном коде) ...
 BASE_CSS = """<style>:root{--bg-color:#1a1d24;--container-bg:#232730;--container-border:#3b4048;--text-color:#cdd6f4;--text-muted:#a6adc8;--accent-color-1:#89b4fa;--accent-color-2:#a6e3a1;--link-color:var(--accent-color-2);--link-hover-bg:#3e4451;--error-color:#f38ba8;--header-color:var(--accent-color-1);--scrollbar-bg:#313244;--scrollbar-thumb:#585b70;--font-primary:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;--font-mono:'Consolas','Courier New',monospace;}*,*::before,*::after{box-sizing:border-box;}body{font-family:var(--font-primary);background-color:var(--bg-color);color:var(--text-color);margin:0;padding:20px;display:flex;flex-direction:column;min-height:100vh;font-size:16px;}h1{text-align:center;color:var(--header-color);margin:0 0 20px 0;font-weight:600;letter-spacing:1px;}::-webkit-scrollbar{width:8px;}::-webkit-scrollbar-track{background:var(--scrollbar-bg);border-radius:4px;}::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb);border-radius:4px;}::-webkit-scrollbar-thumb:hover{background:#6E738D;}.navigation{display:flex;justify-content:center;align-items:center;padding:10px;margin-bottom:25px;background-color:var(--container-bg);border-radius:8px;border:1px solid var(--container-border);box-shadow:0 2px 8px rgba(0,0,0,0.3);}.navigation a{color:var(--link-color);text-decoration:none;margin:0 10px;padding:8px 15px;border-radius:6px;transition:background-color 0.2s ease,color 0.2s ease;font-weight:500;}.navigation a:hover,.navigation a:focus{background-color:var(--link-hover-bg);color:var(--text-color);outline:none;}.nav-separator{color:var(--text-muted);opacity:0.5;}.content-wrapper{background-color:var(--container-bg);border:1px solid var(--container-border);border-radius:8px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.3);flex-grow:1;display:flex;flex-direction:column;min-height:300px;}.status-bar{text-align:center;font-size:0.9em;color:var(--text-muted);padding:15px 0 5px 0;height:20px;}.status-bar .loader{border:3px solid var(--container-border);border-radius:50%;border-top:3px solid var(--accent-color-1);width:14px;height:14px;animation:spin 1s linear infinite;display:inline-block;margin-left:8px;vertical-align:middle;}@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}</style>"""
 NAV_HTML = """<nav class="navigation">
 <a href="/">Полный чат</a><span class="nav-separator">|</span>
@@ -63,7 +165,6 @@ NAV_HTML = """<nav class="navigation">
 <a href="/scoreboard_viewer">Таблица счета</a><span class="nav-separator">|</span>
 <a href="/full_json">Все данные (JSON)</a>
 </nav>"""
-# ----------------------------------
 
 # --- HTML Templates ---
 HTML_TEMPLATE_MAIN = """<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>CS2 Chat Viewer</title><style>#chat-container{flex-grow:1;overflow-y:auto;padding-right:10px;display:flex;flex-direction:column;}#chat-container-inner{margin-top:auto;padding-top:10px;}.message{margin-bottom:12px;padding:10px 15px;border-radius:8px;background-color:#2a2e37;border:1px solid #414550;word-wrap:break-word;line-height:1.5;max-width:85%;align-self:flex-start;}.message .timestamp{font-size:0.8em;color:var(--text-muted);margin-right:8px;opacity:0.7;}.message .sender{font-weight:600;color:var(--accent-color-1);margin-right:5px;}.message .text{}.loading-placeholder{align-self:center;color:var(--text-muted);margin-top:20px;}</style></head><body><div class="content-wrapper"><h1>CS2 Chat Viewer (Полный)</h1><div id="chat-container"><div id="chat-container-inner"><div class="message loading-placeholder">Загрузка сообщений...</div></div></div></div><div class="status-bar"><span id="status-text">Ожидание данных...</span><span id="loading-indicator" style="display: none;" class="loader"></span></div><script>const chatContainerInner=document.getElementById('chat-container-inner');const chatContainer=document.getElementById('chat-container');const statusText=document.getElementById('status-text');const loadingIndicator=document.getElementById('loading-indicator');let isFetching=!1,errorCount=0;const MAX_ERRORS=5;async function fetchMessages(){if(isFetching||errorCount>=MAX_ERRORS)return;isFetching=!0;loadingIndicator.style.display='inline-block';try{const response=await fetch('/chat');if(!response.ok)throw new Error('Ошибка сети: '+response.status);const messages=await response.json();const isScrolledToBottom=chatContainer.scrollTop+chatContainer.clientHeight>=chatContainer.scrollHeight-30;chatContainerInner.innerHTML='';if(messages.length===0){chatContainerInner.innerHTML='<div class="message loading-placeholder">Сообщений пока нет.</div>'}else{messages.forEach(data=>{const messageElement=document.createElement('div');messageElement.className='message';const timeSpan=document.createElement('span');timeSpan.className='timestamp';timeSpan.textContent=`[${data.ts}]`;const senderSpan=document.createElement('span');senderSpan.className='sender';senderSpan.textContent=data.sender+':';const textSpan=document.createElement('span');textSpan.className='text';textSpan.textContent=data.msg;messageElement.appendChild(timeSpan);messageElement.appendChild(senderSpan);messageElement.appendChild(textSpan);chatContainerInner.appendChild(messageElement)})}if(isScrolledToBottom){setTimeout(()=>{chatContainer.scrollTop=chatContainer.scrollHeight},0)}statusText.textContent='Обновлено: '+new Date().toLocaleTimeString();errorCount=0}catch(error){console.error('Ошибка:',error);statusText.textContent='Ошибка: '+error.message+'. #'+(errorCount+1);errorCount++;if(errorCount>=MAX_ERRORS){statusText.textContent+=' Автообновление остановлено.';clearInterval(intervalId)}}finally{isFetching=!1;loadingIndicator.style.display='none'}}const intervalId=setInterval(fetchMessages,3000);setTimeout(fetchMessages,500);</script></body></html>"""
@@ -95,174 +196,100 @@ function buildScoreboardTables(data){teamsContainer.innerHTML='';if(!data||!data
 async function fetchScoreboardData(){if(isFetching||errorCount>=MAX_ERRORS)return;isFetching=!0;loadingIndicator.style.display='inline-block';try{const response=await fetch('/scoreboard_json');if(!response.ok)throw new Error('Ошибка сети: '+response.status);const scoreboardData=await response.json();buildScoreboardTables(scoreboardData);statusText.textContent='Обновлено: '+new Date().toLocaleTimeString();errorCount=0}catch(error){placeholder.textContent='Ошибка загрузки данных таблицы.';console.error(error);statusText.textContent='Ошибка: '+error.message+'. #'+(errorCount+1);errorCount++;if(errorCount>=MAX_ERRORS){statusText.textContent+=' Автообновление остановлено.';clearInterval(intervalId)}}finally{isFetching=!1;loadingIndicator.style.display='none'}}const intervalId=setInterval(fetchScoreboardData,7000);fetchScoreboardData();</script></body></html>"""
 # ----------------------------------
 
-# --- Flask Endpoints ---
 @app.route('/submit_logs', methods=['POST'])
 @app.route('/gsi', methods=['POST'])
 def receive_and_parse_logs_handler():
     global chat_messages, raw_log_lines, current_scoreboard_data, player_nickname_map
+    global temp_json_lines_buffer, is_capturing_json_block 
+    
     log_lines = []
-
     if request.is_json:
         data = request.get_json()
-        if isinstance(data, dict) and 'lines' in data and isinstance(data.get('lines'), list):
-            log_lines = data.get('lines', [])
-        else:
-            app.logger.warning("Получен JSON, но ключ 'lines' отсутствует или не является списком.")
+        if isinstance(data, dict) and 'lines' in data and isinstance(data.get('lines'), list): log_lines = data.get('lines', [])
+        else: logger.warning("Получен JSON, но ключ 'lines' отсутствует или не является списком.")
     else:
         raw_data = request.get_data(as_text=True)
-        if raw_data:
-            log_lines = raw_data.splitlines()
+        if raw_data: log_lines = raw_data.splitlines()
 
-    if not log_lines:
-        app.logger.warning("Запрос получен, но строки логов не найдены.")
-        return jsonify({"status": "error", "message": "Строки не предоставлены или неверный формат"}), 400
-
+    if not log_lines: return jsonify({"status": "error", "message": "Строки не предоставлены"}), 400
     raw_log_lines.extend(log_lines)
 
     updated_nick_count = 0
     for line in log_lines:
         if not line: continue
         for match in PLAYER_INFO_REGEX.finditer(line):
-            player_info = match.groupdict()
-            account_id = player_info.get('accountid')
-            nickname = player_info.get('nickname')
-            if account_id and nickname:
-                if player_nickname_map.get(account_id) != nickname:
-                     player_nickname_map[account_id] = nickname
-                     updated_nick_count += 1
-    if updated_nick_count > 0:
-        app.logger.info(f"Nickname map updated for {updated_nick_count} players.")
+            player_info = match.groupdict(); account_id = player_info.get('accountid'); nickname = player_info.get('nickname')
+            if account_id and nickname and player_nickname_map.get(account_id) != nickname:
+                 player_nickname_map[account_id] = nickname; updated_nick_count += 1
+    if updated_nick_count > 0: logger.info(f"Nickname map updated for {updated_nick_count} players.")
 
-    new_chat_messages_count = 0
     parsed_chat_batch = []
-    
-    # --- ИЗМЕНЕННАЯ ЛОГИКА ОБРАБОТКИ JSON-БЛОКА SCOREBOARD ---
-    json_buffer = []
-    in_json_block = False
-    
-    for line_idx, line_content in enumerate(log_lines):
-        if not line_content: continue
+    new_chat_messages_count = 0
+    json_block_was_processed_in_this_call = False
 
-        # Сначала обработка JSON-блока, если мы внутри него или он начинается
-        if not in_json_block and "JSON_BEGIN{" in line_content:
-            start_index = line_content.find("JSON_BEGIN{") + len("JSON_BEGIN")
-            json_buffer = [line_content[start_index:]] # Начинаем буфер с '{'
-            in_json_block = True
-            app.logger.debug("Начало JSON-блока scoreboard.")
-            # Если блок однострочный (маловероятно для полного scoreboard)
-            if "}}JSON_END" in json_buffer[0]:
-                end_index = json_buffer[0].rfind("}}JSON_END")
-                json_buffer[0] = json_buffer[0][:end_index + 2] # Включаем '}}'
-                in_json_block = False # Блок сразу же завершен
-                # Обработка JSON блока будет ниже
-            else:
-                continue # Переходим к следующей строке, чтобы собрать больше данных для JSON
+    for line_content in log_lines:
+        if not line_content.strip(): continue
         
-        elif in_json_block:
-            json_buffer.append(line_content) # Добавляем полную строку лога в буфер
-            if "}}JSON_END" in line_content:
-                in_json_block = False
-                app.logger.debug(f"Конец JSON-блока scoreboard. Собрано строк: {len(json_buffer)}.")
-                # Блок собран, обработка будет ниже
-            else:
-                continue # Продолжаем собирать строки для JSON-блока
+        stripped_content_for_markers = strip_log_prefix(line_content)
 
-        # Если мы только что завершили сбор JSON-блока (in_json_block стало false, но json_buffer еще не пуст)
-        if not in_json_block and json_buffer:
-            cleaned_json_parts = []
-            for i, log_line_part in enumerate(json_buffer):
-                # Для первой строки (которая начинается с "{") и последней (которая заканчивается на "}}")
-                # префикс даты/времени уже был удален при инициализации/завершении буфера.
-                # Но для промежуточных строк он мог остаться.
-                # И сама первая строка (если JSON_BEGIN был не в начале) и последняя (до JSON_END)
-                # могут содержать префиксы.
-                
-                # Удаляем префикс даты/времени из каждой части строки JSON
-                match_prefix = re.match(r"^(?:\s*(?:\d{2}\/\d{2}\/\d{4}\s+-\s+)?(?:\d{2}:\d{2}:\d{2}\.\d{3}\s+-\s+)?)(.*)$", log_line_part)
-                actual_json_content = match_prefix.group(1) if match_prefix else log_line_part
-                cleaned_json_parts.append(actual_json_content)
-
-            full_json_str_to_parse = "".join(cleaned_json_parts)
-            # Удаляем висячие запятые перед закрывающими скобками (частая проблема в логах)
-            full_json_str_to_parse = re.sub(r',\s*([\}\]])', r'\1', full_json_str_to_parse)
-            
-            json_buffer = [] # Очищаем буфер
-
+        if not is_capturing_json_block and "JSON_BEGIN{" in stripped_content_for_markers:
+            is_capturing_json_block = True
+            temp_json_lines_buffer = [] 
             try:
-                app.logger.debug(f"Попытка парсинга JSON для scoreboard: {full_json_str_to_parse[:1000]}...")
-                scoreboard_json_data = json.loads(full_json_str_to_parse)
-                app.logger.info("Успешно распарсен JSON-блок scoreboard.")
-
-                log_fields_str = scoreboard_json_data.get("fields")
-                log_players_obj = scoreboard_json_data.get("players")
-
-                if isinstance(log_fields_str, str) and isinstance(log_players_obj, dict):
-                    original_fields_from_log = [f.strip() for f in log_fields_str.split(',') if f.strip()]
-                    
-                    display_fields = ['nickname']
-                    original_accountid_cased = None
-                    for f_val in original_fields_from_log:
-                        if f_val.lower() == 'accountid':
-                            original_accountid_cased = f_val 
-                        if f_val.lower() not in ['nickname', 'accountid']:
-                            display_fields.append(f_val)
-                    if original_accountid_cased: 
-                        display_fields.append(original_accountid_cased)
-                    
-                    current_scoreboard_data['fields'] = display_fields
-                    current_scoreboard_data['players'] = [] # Очищаем для новых данных
-
-                    for player_key_log, player_values_str_log in log_players_obj.items():
-                        if isinstance(player_values_str_log, str):
-                            player_values_list = [v.strip() for v in player_values_str_log.split(',')]
-                            if len(player_values_list) == len(original_fields_from_log):
-                                player_dict_temp = dict(zip(original_fields_from_log, player_values_list))
-                                acc_id_val = player_dict_temp.get('accountid') # accountid из оригинальных полей
-                                
-                                if acc_id_val and acc_id_val.strip() and acc_id_val.strip() != "0": # Проверяем, что ID не пустой и не "0"
-                                    nick = player_nickname_map.get(acc_id_val, f"ID:{acc_id_val}")
-                                    player_dict_temp['nickname'] = nick
-                                else:
-                                    player_dict_temp['nickname'] = player_dict_temp.get('name', 'Spectator/Bot') # Если name есть, используем, иначе Spectator/Bot
-
-                                current_scoreboard_data['players'].append(player_dict_temp)
-                            else:
-                                app.logger.warning(f"Scoreboard JSON: Игрок '{player_key_log}': несоответствие кол-ва значений ({len(player_values_list)}) и оригинальных полей ({len(original_fields_from_log)}). Values: '{player_values_str_log}'")
-                    app.logger.info(f"Scoreboard обновлен из JSON. Полей для отображения: {len(current_scoreboard_data['fields'])}, Игроков: {len(current_scoreboard_data['players'])}")
-                else:
-                    app.logger.warning("Scoreboard JSON: 'fields' не строка или 'players' не словарь в распарсенных данных.")
-            except json.JSONDecodeError as e:
-                app.logger.error(f"JSONDecodeError для scoreboard: {e}. Данные: '{full_json_str_to_parse[:1000]}...'")
-            except Exception as e:
-                app.logger.error(f"Непредвиденная ошибка при обработке JSON scoreboard: {e}")
-            continue # Переходим к следующей строке лога после обработки JSON блока
-
-        # Парсинг чата (если строка не была частью JSON блока и не была его началом/концом)
-        chat_match = CHAT_REGEX_SAY.search(line_content)
-        if chat_match:
-            extracted_data = chat_match.groupdict()
-            player_name_and_tags_str = extracted_data['player_name_and_tags']
-            name_match = re.search(r'^([^\<]+)', player_name_and_tags_str)
-            sender = html.escape(name_match.group(1).strip()) if name_match else html.escape(player_name_and_tags_str.strip())
-            message = html.escape(extracted_data['message'].strip())
-            timestamp = extracted_data.get('timestamp', 'N/A')
-            if not message: continue
-            message_obj = {"ts": timestamp, "sender": sender, "msg": message}
-            parsed_chat_batch.append(message_obj)
-            new_chat_messages_count += 1
-            # continue не нужен, так как это последняя проверка в цикле для текущей строки
+                # content_part должен быть {..."fields":"...",...}
+                actual_part = stripped_content_for_markers.split("JSON_BEGIN{", 1)[1]
+                temp_json_lines_buffer.append("{" + actual_part) 
+            except IndexError:
+                logger.warning(f"Malformed JSON_BEGIN line (no content after marker): {line_content}")
+                is_capturing_json_block = False; continue
+            logger.debug(f"JSON_BEGIN. Buffer started with: {temp_json_lines_buffer[0][:200]}")
+            
+            if "}}JSON_END" in temp_json_lines_buffer[0]: 
+                end_marker_pos = temp_json_lines_buffer[0].rfind("}}JSON_END")
+                temp_json_lines_buffer[0] = temp_json_lines_buffer[0][:end_marker_pos + 2] 
+                is_capturing_json_block = False 
+                logger.debug("Однострочный JSON блок будет обработан.")
+            else: continue 
+        
+        elif is_capturing_json_block:
+            temp_json_lines_buffer.append(stripped_content_for_markers)
+            logger.debug(f"Added to JSON buffer: {stripped_content_for_markers[:200]}")
+            if "}}JSON_END" in stripped_content_for_markers:
+                is_capturing_json_block = False
+                end_marker_pos = temp_json_lines_buffer[-1].rfind("}}JSON_END")
+                if end_marker_pos != -1:
+                     temp_json_lines_buffer[-1] = temp_json_lines_buffer[-1][:end_marker_pos + 2]
+                logger.debug(f"JSON_END. Buffer finalized. Last part: {temp_json_lines_buffer[-1][:200]}")
+            else: continue
+        
+        if not is_capturing_json_block and temp_json_lines_buffer: 
+            if process_json_scoreboard_data(temp_json_lines_buffer):
+                json_block_was_processed_in_this_call = True
+            temp_json_lines_buffer = [] 
+            continue 
+        
+        if not is_capturing_json_block: 
+            chat_match = CHAT_REGEX_SAY.search(line_content) 
+            if chat_match:
+                extracted_data = chat_match.groupdict()
+                player_name_and_tags_str = extracted_data['player_name_and_tags']
+                name_match = re.search(r'^([^\<]+)', player_name_and_tags_str)
+                sender = html.escape(name_match.group(1).strip()) if name_match else html.escape(player_name_and_tags_str.strip())
+                message = html.escape(extracted_data['message'].strip())
+                timestamp = extracted_data.get('timestamp', 'N/A')
+                if not message: continue 
+                message_obj = {"ts": timestamp, "sender": sender, "msg": message}
+                parsed_chat_batch.append(message_obj)
+                new_chat_messages_count += 1
     
-    # Обновление глобальных данных после обработки ВСЕЙ пачки
     if parsed_chat_batch:
         chat_messages.extend(parsed_chat_batch)
         if new_chat_messages_count > 0:
-             app.logger.info(f"Log Parser: Добавлено {new_chat_messages_count} сообщений чата.")
+            logger.info(f"Log Parser: Добавлено {new_chat_messages_count} сообщений чата.")
     
-    if processed_json_block_in_batch: # Флаг должен был установиться, если JSON-блок был обработан
-        app.logger.info("Scoreboard был обновлен из JSON-блока в этой пачке (если данные были корректны).")
-    # else: # Если JSON-блок не был найден/обработан в этой пачке (например, пришли только другие логи)
-    #     app.logger.info("JSON-блок для scoreboard не был найден или обработан в этой пачке.")
-
+    if json_block_was_processed_in_this_call:
+        logger.info("Блок Scoreboard был обработан в этом POST-запросе (если данные были корректны).")
+        
     return jsonify({"status": "success", "message": f"Обработано {len(log_lines)} строк."}), 200
 
 # --- Существующие эндпоинты ---
