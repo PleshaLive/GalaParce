@@ -16,13 +16,16 @@ CORS(app)
 # --- Logging Configuration ---
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(levelname)s: %(message)s')
-logger = logging.getLogger(__name__) 
+logger = logging.getLogger(__name__)
 
 # --- Data Storage ---
 MAX_CHAT_MESSAGES = 100
 MAX_RAW_LOGS = 300
 chat_messages = deque(maxlen=MAX_CHAT_MESSAGES)
 raw_log_lines = deque(maxlen=MAX_RAW_LOGS)
+# current_scoreboard_data будет хранить данные для таблицы счета
+# Ключ "fields" - это список имен столбцов.
+# Ключ "players" - это список словарей, где каждый словарь представляет игрока.
 current_scoreboard_data = {"fields": [], "players": []}
 # -----------------------
 
@@ -30,29 +33,29 @@ current_scoreboard_data = {"fields": [], "players": []}
 CHAT_REGEX_SAY = re.compile(
     r"""
     ^\s* # Start of line, optional whitespace
-    (?:\d{2}\/\d{2}\/\d{4}\s+-\s+)?              # Optional Date (DD/MM/YYYY - )
+    (?:\d{2}\/\d{2}\/\d{4}\s+-\s+)?          # Optional Date (DD/MM/YYYY - )
     (?P<timestamp>\d{2}:\d{2}:\d{2}\.\d{3})      # Timestamp (HH:MM:SS.ms)
-    \s+-\s+                                     # Separator " - "
+    \s+-\s+                                  # Separator " - "
     \"(?P<player_name_and_tags>.+?<\d+><\[U:\d:\d+\]><\w+>)\" # Player info within quotes (name<id><steamid><team>)
-    \s+                                         # Space
-    (?:say|say_team)                            # Keyword 'say' or 'say_team'
-    \s+                                         # Space
-    \"(?P<message>.*)\"                         # Message content within quotes
-    \s*$                                        # Optional whitespace, end of line
+    \s+                                      # Space
+    (?:say|say_team)                         # Keyword 'say' or 'say_team'
+    \s+                                      # Space
+    \"(?P<message>.*)\"                      # Message content within quotes
+    \s*$                                     # Optional whitespace, end of line
     """,
     re.VERBOSE | re.IGNORECASE
 )
 
 PLAYER_INFO_REGEX = re.compile(
     r"""
-    \"(?P<nickname>.+?)       # Захват никнейма (нежадный)
-    <\d+>                    # Совпадение с <userid> (не захватываем)
+    \"(?P<nickname>.+?)      # Захват никнейма (нежадный)
+    <\d+>                   # Совпадение с <userid> (не захватываем)
     <\[U:1:(?P<accountid>\d+)\]> # Совпадение с <[U:1:accountid]> и захват accountid
-    <\w+>\"                  # Совпадение с <Team> (не захватываем) и закрывающей кавычкой
+    <\w+>\"                   # Совпадение с <Team> (не захватываем) и закрывающей кавычкой
     """,
     re.VERBOSE | re.IGNORECASE
 )
-player_nickname_map = {} 
+player_nickname_map = {}
 # ----------------------------------------------
 
 # Глобальные переменные для сборки JSON-блока между POST-запросами
@@ -70,6 +73,11 @@ def strip_log_prefix(log_line_content):
 def process_json_scoreboard_data(json_lines_list_buffer):
     """
     Парсит собранный JSON-блок и обновляет current_scoreboard_data.
+    Ожидает JSON вида:
+    {
+        "fields": "accountid,team,score,...",
+        "players": { "player_steamid": "value1,value2,value3,..." }
+    }
     """
     global current_scoreboard_data, player_nickname_map
     if not json_lines_list_buffer:
@@ -77,15 +85,16 @@ def process_json_scoreboard_data(json_lines_list_buffer):
         return False
 
     raw_json_str = "".join(json_lines_list_buffer)
-    json_to_parse = re.sub(r',\s*([\}\]])', r'\1', raw_json_str) 
-    
+    # Удаляем висячие запятые перед закрывающими скобками, если они есть (простая очистка)
+    json_to_parse = re.sub(r',\s*([\}\]])', r'\1', raw_json_str)
+
     logger.debug(f"Попытка парсинга JSON для scoreboard (длина {len(json_to_parse)}). Начало: {json_to_parse[:1000]}...")
     try:
         scoreboard_payload = json.loads(json_to_parse)
         logger.info("УСПЕХ: JSON-блок scoreboard распарсен.")
 
         log_fields_str = scoreboard_payload.get("fields")
-        log_players_dict_from_json = scoreboard_payload.get("players") 
+        log_players_dict_from_json = scoreboard_payload.get("players")
 
         if not isinstance(log_fields_str, str) or not log_fields_str.strip():
             logger.warning("Scoreboard JSON ОШИБКА: 'fields' отсутствуют, пустые или не являются строкой.")
@@ -95,28 +104,37 @@ def process_json_scoreboard_data(json_lines_list_buffer):
             logger.warning("Scoreboard JSON ОШИБКА: 'players' отсутствуют или не являются словарем.")
             return False
 
+        # original_fields_from_log должен содержать 'accountid' и 'team' (или их аналоги)
+        # для корректной работы логики никнеймов и разделения команд.
         original_fields_from_log = [f.strip() for f in log_fields_str.split(',') if f.strip()]
         if not original_fields_from_log:
             logger.warning("Scoreboard JSON ОШИБКА: Список original_fields_from_log пуст после парсинга строки fields.")
             return False
         logger.info(f"Scoreboard JSON: Оригинальные поля из лога ({len(original_fields_from_log)}): {original_fields_from_log}")
 
+        # Подготовка полей для отображения: 'nickname' будет первым.
         display_fields = ['nickname']
-        original_accountid_cased = None
+        original_accountid_cased = None # Для сохранения оригинального написания 'accountid'
         has_accountid_in_original = False
 
+        # Ищем 'accountid' в оригинальных полях и добавляем остальные поля в display_fields,
+        # пропуская 'nickname' (т.к. он уже добавлен) и 'accountid' (т.к. он будет заменен на nickname).
         for f_val in original_fields_from_log:
-            if f_val.lower() == 'accountid':
-                original_accountid_cased = f_val 
+            if f_val.lower() == 'accountid': # Важно для поиска ID игрока
+                original_accountid_cased = f_val
                 has_accountid_in_original = True
+            # Добавляем все поля, кроме 'nickname' и 'accountid'
             if f_val.lower() not in ['nickname', 'accountid']:
                 display_fields.append(f_val)
-        
-        if has_accountid_in_original and original_accountid_cased: 
+
+        # Если 'accountid' был в исходных данных, его можно добавить в конец display_fields,
+        # но JavaScript на клиенте все равно его скроет.
+        # Это может быть полезно, если захочется его где-то использовать в JS перед скрытием.
+        if has_accountid_in_original and original_accountid_cased:
             display_fields.append(original_accountid_cased)
-        elif has_accountid_in_original: 
-             display_fields.append('accountid') 
-        
+        elif has_accountid_in_original: # Если не нашли оригинальное написание, но 'accountid' был
+             display_fields.append('accountid')
+
         current_scoreboard_data['fields'] = display_fields
         new_players_list = []
 
@@ -125,25 +143,45 @@ def process_json_scoreboard_data(json_lines_list_buffer):
             if not isinstance(player_values_str_log, str):
                 logger.warning(f"Scoreboard JSON: Данные для игрока '{player_log_key}' не являются строкой: {player_values_str_log}")
                 continue
-                
+
             player_values_list = [v.strip() for v in player_values_str_log.split(',')]
-            
+
             if len(player_values_list) == len(original_fields_from_log):
                 player_dict_temp = dict(zip(original_fields_from_log, player_values_list))
-                acc_id_val = player_dict_temp.get('accountid')
+
+                # Получаем accountid, используя регистронезависимый поиск по ключу 'accountid'
+                # или точное имя, если оно было найдено ранее.
+                # Предполагается, что original_fields_from_log[0] это accountid, если 'accountid' не найдено по имени.
+                acc_id_val = None
+                found_accountid_key = None
+                for key in player_dict_temp.keys(): # Ищем ключ 'accountid' регистронезависимо
+                    if key.lower() == 'accountid':
+                        found_accountid_key = key
+                        break
                 
+                if found_accountid_key:
+                    acc_id_val = player_dict_temp.get(found_accountid_key)
+                elif original_fields_from_log and original_fields_from_log[0].lower() == 'accountid': # Если первое поле так называется
+                    acc_id_val = player_dict_temp.get(original_fields_from_log[0])
+
+
                 if acc_id_val and acc_id_val.strip() and acc_id_val.strip() != "0":
                     nick = player_nickname_map.get(acc_id_val, f"ID:{acc_id_val}")
                     player_dict_temp['nickname'] = nick
                 else:
-                    player_name_from_stats = player_dict_temp.get('name', 'Spectator/Bot') 
+                    # Если нет accountid или он "0", используем 'name' из данных или "Spectator/Bot"
+                    player_name_from_stats = player_dict_temp.get('name', 'Spectator/Bot')
                     player_dict_temp['nickname'] = player_name_from_stats if ((not acc_id_val or acc_id_val == "0") and player_name_from_stats != 'Spectator/Bot') else 'Spectator/Bot'
                 
+                # Убедимся, что поле 'team' существует для JS-логики (если оно пришло из original_fields_from_log)
+                # JavaScript будет искать player['team']
+                # Если в original_fields_from_log поле команды называется 'team', оно уже будет в player_dict_temp.
+
                 new_players_list.append(player_dict_temp)
                 logger.debug(f"Scoreboard JSON: Добавлен игрок: {player_dict_temp.get('nickname')}")
             else:
                 logger.warning(f"Scoreboard JSON ОШИБКА ДЛИН: Игрок '{player_log_key}': получено значений ({len(player_values_list)}) [{player_values_list}], ожидалось по original_fields_from_log ({len(original_fields_from_log)}) [{original_fields_from_log}]. Строка значений: '{player_values_str_log}'")
-        
+
         current_scoreboard_data['players'] = new_players_list
         logger.info(f"Scoreboard успешно обновлен из JSON. DisplayFields: {current_scoreboard_data['fields']}, Игроков: {len(current_scoreboard_data['players'])}")
         return True
@@ -156,7 +194,6 @@ def process_json_scoreboard_data(json_lines_list_buffer):
 # -----------------------------
 
 # --- Base CSS and Navigation HTML ---
-# ... (остаются без изменений, как в предыдущем полном коде) ...
 BASE_CSS = """<style>:root{--bg-color:#1a1d24;--container-bg:#232730;--container-border:#3b4048;--text-color:#cdd6f4;--text-muted:#a6adc8;--accent-color-1:#89b4fa;--accent-color-2:#a6e3a1;--link-color:var(--accent-color-2);--link-hover-bg:#3e4451;--error-color:#f38ba8;--header-color:var(--accent-color-1);--scrollbar-bg:#313244;--scrollbar-thumb:#585b70;--font-primary:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;--font-mono:'Consolas','Courier New',monospace;}*,*::before,*::after{box-sizing:border-box;}body{font-family:var(--font-primary);background-color:var(--bg-color);color:var(--text-color);margin:0;padding:20px;display:flex;flex-direction:column;min-height:100vh;font-size:16px;}h1{text-align:center;color:var(--header-color);margin:0 0 20px 0;font-weight:600;letter-spacing:1px;}::-webkit-scrollbar{width:8px;}::-webkit-scrollbar-track{background:var(--scrollbar-bg);border-radius:4px;}::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb);border-radius:4px;}::-webkit-scrollbar-thumb:hover{background:#6E738D;}.navigation{display:flex;justify-content:center;align-items:center;padding:10px;margin-bottom:25px;background-color:var(--container-bg);border-radius:8px;border:1px solid var(--container-border);box-shadow:0 2px 8px rgba(0,0,0,0.3);}.navigation a{color:var(--link-color);text-decoration:none;margin:0 10px;padding:8px 15px;border-radius:6px;transition:background-color 0.2s ease,color 0.2s ease;font-weight:500;}.navigation a:hover,.navigation a:focus{background-color:var(--link-hover-bg);color:var(--text-color);outline:none;}.nav-separator{color:var(--text-muted);opacity:0.5;}.content-wrapper{background-color:var(--container-bg);border:1px solid var(--container-border);border-radius:8px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,0.3);flex-grow:1;display:flex;flex-direction:column;min-height:300px;}.status-bar{text-align:center;font-size:0.9em;color:var(--text-muted);padding:15px 0 5px 0;height:20px;}.status-bar .loader{border:3px solid var(--container-border);border-radius:50%;border-top:3px solid var(--accent-color-1);width:14px;height:14px;animation:spin 1s linear infinite;display:inline-block;margin-left:8px;vertical-align:middle;}@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}</style>"""
 NAV_HTML = """<nav class="navigation">
 <a href="/">Полный чат</a><span class="nav-separator">|</span>
@@ -181,47 +218,64 @@ HTML_TEMPLATE_SCOREBOARD = """<!DOCTYPE html><html lang="ru"><head><meta charset
 table.scoreboard{width:100%;border-collapse:collapse;font-size:0.80em;font-family:var(--font-mono);}
 .scoreboard th,.scoreboard td{border:1px solid var(--container-border);padding:5px 7px;text-align:left;white-space:nowrap;}
 .scoreboard thead th{background-color:#2c313a;color:var(--accent-color-1);position:sticky;top:0;z-index:1;}
-.team-ct tbody tr{background-color:rgba(137,180,250,0.07);}
-.team-t tbody tr{background-color:rgba(250,173,137,0.07);}
-.team-other tbody tr{background-color:rgba(120,120,120,0.07);}
-.team-ct thead th{background-color:#3a5a8a;}
-.team-t thead th{background-color:#8a5a3a;}
-.team-other thead th{background-color:#4a4a4a;}
+.team-ct tbody tr{background-color:rgba(137,180,250,0.07);} /* Синеватый фон для CT */
+.team-t tbody tr{background-color:rgba(250,173,137,0.07);} /* Оранжеватый фон для T */
+.team-other tbody tr{background-color:rgba(120,120,120,0.07);} /* Серый фон для других */
+.team-ct thead th{background-color:#3a5a8a;} /* Синий заголовок для CT */
+.team-t thead th{background-color:#8a5a3a;} /* Оранжевый заголовок для T */
+.team-other thead th{background-color:#4a4a4a;} /* Серый заголовок для других */
 .scoreboard tbody tr:hover{background-color:var(--link-hover-bg);}
 .no-data{text-align:center;padding:20px;color:var(--text-muted);}
-.nickname-col{font-weight:bold;color:var(--text-color);}
+.nickname-col{font-weight:bold;color:var(--text-color);} /* Стиль для колонки с никнеймом */
 </style></head><body><div class="content-wrapper"><h1>Таблица счета (Scoreboard)</h1><div class="scoreboard-teams-container" id="scoreboard-teams-container"></div><div id="scoreboard-placeholder" class="no-data">Загрузка данных таблицы счета...</div></div><div class="status-bar"><span id="status-text">Ожидание данных...</span><span id="loading-indicator" style="display:none;" class="loader"></span></div><script>const teamsContainer=document.getElementById('scoreboard-teams-container');const placeholder=document.getElementById('scoreboard-placeholder');const statusText=document.getElementById('status-text');const loadingIndicator=document.getElementById('loading-indicator');let isFetching=!1,errorCount=0;const MAX_ERRORS=5;
-function createTeamTableElement(teamName,teamPlayers,fieldsToDisplay,teamClass){const wrapper=document.createElement('div');wrapper.className='team-table-wrapper';const title=document.createElement('h2');title.textContent=teamName;wrapper.appendChild(title);const table=document.createElement('table');table.className='scoreboard '+teamClass;const tableHead=table.createTHead();const tableBody=table.createTBody();const headerRow=tableHead.insertRow();let orderedFields=[...fieldsToDisplay];const nameKeys=['nickname','name','playername','имя','никнейм'];let actualNicknameKey=null;for(const key of nameKeys){const foundKey=orderedFields.find(f=>f.trim().toLowerCase()===key.toLowerCase());if(foundKey){actualNicknameKey=foundKey.trim();orderedFields=[actualNicknameKey,...orderedFields.filter(f=>f.trim().toLowerCase()!==actualNicknameKey.toLowerCase())];break}}orderedFields.forEach(field=>{const cleanFieldKey=field.trim().toLowerCase();if(cleanFieldKey!=='accountid'){const th=document.createElement('th');let headerText=field.trim();if(actualNicknameKey&&cleanFieldKey===actualNicknameKey.toLowerCase()){headerText='Игрок'}th.textContent=headerText;headerRow.appendChild(th)}});teamPlayers.slice(0,5).forEach(player=>{const row=tableBody.insertRow();orderedFields.forEach(fieldKey=>{const cleanFieldKey=fieldKey.trim().toLowerCase();if(cleanFieldKey!=='accountid'){const cell=row.insertCell();const cellValue=player[fieldKey.trim()]!==undefined?player[fieldKey.trim()]:'-';cell.textContent=cellValue;if(actualNicknameKey&&cleanFieldKey===actualNicknameKey.toLowerCase()){cell.classList.add('nickname-col')}}})});wrapper.appendChild(table);return wrapper}
-function buildScoreboardTables(data){teamsContainer.innerHTML='';if(!data||!data.fields||data.fields.length===0||!data.players||data.players.length===0){placeholder.textContent='Нет данных об игроках или поля не определены.';teamsContainer.style.display='none'; if(data && data.players && data.players.length === 0) placeholder.textContent='Нет данных об игроках в командах.'; return;}teamsContainer.style.display='flex';placeholder.textContent='';const teamCtId='3';const teamTId='2';const teamCtName='Контр-Террористы';const teamTName='Террористы';let playersCT=[],playersT=[],otherPlayers=[];if(data.players&&data.players.length>0){data.players.forEach(player=>{const teamFieldValue=player['team']?String(player['team']).trim():null;if(teamFieldValue===teamCtId)playersCT.push(player);else if(teamFieldValue===teamTId)playersT.push(player);else otherPlayers.push(player)})}let displayedSomething=!1;if(playersCT.length>0){teamsContainer.appendChild(createTeamTableElement(teamCtName,playersCT,data.fields,'team-ct'));displayedSomething=!0}if(playersT.length>0){teamsContainer.appendChild(createTeamTableElement(teamTName,playersT,data.fields,'team-t'));displayedSomething=!0}if(!displayedSomething&&otherPlayers.length>0){teamsContainer.appendChild(createTeamTableElement('Другие игроки',otherPlayers,data.fields,'team-other'));displayedSomething=!0}else if(!displayedSomething&&data.players&&data.players.length>0){teamsContainer.appendChild(createTeamTableElement('Игроки (команды не определены)',data.players,data.fields,'team-other'));displayedSomething=!0}if(!displayedSomething){placeholder.textContent='Нет данных об игроках в командах.'}}
+function createTeamTableElement(teamName,teamPlayers,fieldsToDisplay,teamClass){const wrapper=document.createElement('div');wrapper.className='team-table-wrapper';const title=document.createElement('h2');title.textContent=teamName;wrapper.appendChild(title);const table=document.createElement('table');table.className='scoreboard '+teamClass;const tableHead=table.createTHead();const tableBody=table.createTBody();const headerRow=tableHead.insertRow();let orderedFields=[...fieldsToDisplay];const nameKeys=['nickname','name','playername','имя','никнейм'];let actualNicknameKey=null;for(const key of nameKeys){const foundKey=orderedFields.find(f=>f.trim().toLowerCase()===key.toLowerCase());if(foundKey){actualNicknameKey=foundKey.trim();orderedFields=[actualNicknameKey,...orderedFields.filter(f=>f.trim().toLowerCase()!==actualNicknameKey.toLowerCase())];break}}orderedFields.forEach(field=>{const cleanFieldKey=field.trim().toLowerCase();if(cleanFieldKey!=='accountid'){const th=document.createElement('th');let headerText=field.trim();if(actualNicknameKey&&cleanFieldKey===actualNicknameKey.toLowerCase()){headerText='Игрок'}th.textContent=headerText;headerRow.appendChild(th)}});teamPlayers.slice(0,10).forEach(player=>{const row=tableBody.insertRow();orderedFields.forEach(fieldKey=>{const cleanFieldKey=fieldKey.trim().toLowerCase();if(cleanFieldKey!=='accountid'){const cell=row.insertCell();const cellValue=player[fieldKey.trim()]!==undefined?player[fieldKey.trim()]:'-';cell.textContent=cellValue;if(actualNicknameKey&&cleanFieldKey===actualNicknameKey.toLowerCase()){cell.classList.add('nickname-col')}}})});wrapper.appendChild(table);return wrapper}
+function buildScoreboardTables(data){teamsContainer.innerHTML='';if(!data||!data.fields||data.fields.length===0||!data.players||data.players.length===0){placeholder.textContent='Нет данных об игроках или поля не определены.';teamsContainer.style.display='none'; if(data && data.players && data.players.length === 0) placeholder.textContent='Нет данных об игроках в командах.'; return;}teamsContainer.style.display='flex';placeholder.textContent='';const teamCtId='3';const teamTId='2';const teamCtName='Контр-Террористы (CT)';const teamTName='Террористы (T)';let playersCT=[],playersT=[],otherPlayers=[];if(data.players&&data.players.length>0){data.players.forEach(player=>{const teamFieldValue=player['team']?String(player['team']).trim():null;if(teamFieldValue===teamCtId)playersCT.push(player);else if(teamFieldValue===teamTId)playersT.push(player);else otherPlayers.push(player)})}let displayedSomething=!1;if(playersCT.length>0){teamsContainer.appendChild(createTeamTableElement(teamCtName,playersCT,data.fields,'team-ct'));displayedSomething=!0}if(playersT.length>0){teamsContainer.appendChild(createTeamTableElement(teamTName,playersT,data.fields,'team-t'));displayedSomething=!0}if(otherPlayers.length > 0 && !displayedSomething) { teamsContainer.appendChild(createTeamTableElement('Наблюдатели / Другие',otherPlayers,data.fields,'team-other')); displayedSomething = true; } else if (otherPlayers.length > 0) { teamsContainer.appendChild(createTeamTableElement('Наблюдатели / Другие',otherPlayers,data.fields,'team-other'));} if(!displayedSomething&&data.players&&data.players.length>0){teamsContainer.appendChild(createTeamTableElement('Игроки (команды не определены)',data.players,data.fields,'team-other'));displayedSomething=!0}if(!displayedSomething){placeholder.textContent='Нет данных об игроках в командах.'}}
 async function fetchScoreboardData(){if(isFetching||errorCount>=MAX_ERRORS)return;isFetching=!0;loadingIndicator.style.display='inline-block';try{const response=await fetch('/scoreboard_json');if(!response.ok)throw new Error('Ошибка сети: '+response.status);const scoreboardData=await response.json();buildScoreboardTables(scoreboardData);statusText.textContent='Обновлено: '+new Date().toLocaleTimeString();errorCount=0}catch(error){placeholder.textContent='Ошибка загрузки данных таблицы.';console.error(error);statusText.textContent='Ошибка: '+error.message+'. #'+(errorCount+1);errorCount++;if(errorCount>=MAX_ERRORS){statusText.textContent+=' Автообновление остановлено.';clearInterval(intervalId)}}finally{isFetching=!1;loadingIndicator.style.display='none'}}const intervalId=setInterval(fetchScoreboardData,7000);fetchScoreboardData();</script></body></html>"""
 # ----------------------------------
 
 @app.route('/submit_logs', methods=['POST'])
-@app.route('/gsi', methods=['POST'])
+@app.route('/gsi', methods=['POST']) # Дополнительный маршрут, если используется GSI
 def receive_and_parse_logs_handler():
     global chat_messages, raw_log_lines, current_scoreboard_data, player_nickname_map
-    global temp_json_lines_buffer, is_capturing_json_block 
-    
+    global temp_json_lines_buffer, is_capturing_json_block
+
     log_lines = []
     if request.is_json:
         data = request.get_json()
-        if isinstance(data, dict) and 'lines' in data and isinstance(data.get('lines'), list): log_lines = data.get('lines', [])
-        else: logger.warning("Получен JSON, но ключ 'lines' отсутствует или не является списком.")
-    else:
-        raw_data = request.get_data(as_text=True)
-        if raw_data: log_lines = raw_data.splitlines()
+        if isinstance(data, dict) and 'lines' in data and isinstance(data.get('lines'), list):
+            log_lines = data.get('lines', [])
+        elif isinstance(data, list): # Если пришел просто список строк в JSON
+             log_lines = data
+        else:
+            logger.warning("Получен JSON, но ключ 'lines' отсутствует или не является списком, или формат неизвестен.")
+            # Попробуем прочитать тело запроса как текст, если это GSI и не 'lines'
+            raw_data_fallback = request.get_data(as_text=True)
+            if raw_data_fallback:
+                 log_lines = raw_data_fallback.splitlines()
 
-    if not log_lines: return jsonify({"status": "error", "message": "Строки не предоставлены"}), 400
-    raw_log_lines.extend(log_lines)
+    else: # Если не JSON, читаем как текст
+        raw_data = request.get_data(as_text=True)
+        if raw_data:
+            log_lines = raw_data.splitlines()
+
+    if not log_lines:
+        return jsonify({"status": "error", "message": "Строки не предоставлены или не удалось их извлечь"}), 400
+
+    raw_log_lines.extend(log_lines) # Сохраняем все полученные строки для raw_log_viewer
 
     updated_nick_count = 0
     for line in log_lines:
         if not line: continue
+        # Обновляем карту никнеймов из всех строк лога
         for match in PLAYER_INFO_REGEX.finditer(line):
-            player_info = match.groupdict(); account_id = player_info.get('accountid'); nickname = player_info.get('nickname')
+            player_info = match.groupdict()
+            account_id = player_info.get('accountid')
+            nickname = player_info.get('nickname')
             if account_id and nickname and player_nickname_map.get(account_id) != nickname:
-                 player_nickname_map[account_id] = nickname; updated_nick_count += 1
-    if updated_nick_count > 0: logger.info(f"Nickname map updated for {updated_nick_count} players.")
+                player_nickname_map[account_id] = nickname
+                updated_nick_count += 1
+    if updated_nick_count > 0:
+        logger.info(f"Nickname map updated for {updated_nick_count} players.")
 
     parsed_chat_batch = []
     new_chat_messages_count = 0
@@ -229,67 +283,76 @@ def receive_and_parse_logs_handler():
 
     for line_content in log_lines:
         if not line_content.strip(): continue
-        
+
         stripped_content_for_markers = strip_log_prefix(line_content)
 
+        # Логика захвата JSON-блока для scoreboard
         if not is_capturing_json_block and "JSON_BEGIN{" in stripped_content_for_markers:
             is_capturing_json_block = True
-            temp_json_lines_buffer = [] 
+            temp_json_lines_buffer = []
             try:
-                # content_part должен быть {..."fields":"...",...}
                 actual_part = stripped_content_for_markers.split("JSON_BEGIN{", 1)[1]
-                temp_json_lines_buffer.append("{" + actual_part) 
+                temp_json_lines_buffer.append("{" + actual_part)
             except IndexError:
                 logger.warning(f"Malformed JSON_BEGIN line (no content after marker): {line_content}")
                 is_capturing_json_block = False; continue
             logger.debug(f"JSON_BEGIN. Buffer started with: {temp_json_lines_buffer[0][:200]}")
-            
-            if "}}JSON_END" in temp_json_lines_buffer[0]: 
+
+            # Проверка на случай, если весь JSON в одной строке
+            if "}}JSON_END" in temp_json_lines_buffer[0]:
                 end_marker_pos = temp_json_lines_buffer[0].rfind("}}JSON_END")
-                temp_json_lines_buffer[0] = temp_json_lines_buffer[0][:end_marker_pos + 2] 
-                is_capturing_json_block = False 
+                temp_json_lines_buffer[0] = temp_json_lines_buffer[0][:end_marker_pos + 2] # +2 для "}}"
+                is_capturing_json_block = False
                 logger.debug("Однострочный JSON блок будет обработан.")
-            else: continue 
-        
+            else:
+                continue # Продолжаем собирать строки, если блок не завершен
+
         elif is_capturing_json_block:
-            temp_json_lines_buffer.append(stripped_content_for_markers)
+            temp_json_lines_buffer.append(stripped_content_for_markers) # Добавляем строку как есть (без префикса)
             logger.debug(f"Added to JSON buffer: {stripped_content_for_markers[:200]}")
             if "}}JSON_END" in stripped_content_for_markers:
                 is_capturing_json_block = False
                 end_marker_pos = temp_json_lines_buffer[-1].rfind("}}JSON_END")
                 if end_marker_pos != -1:
-                     temp_json_lines_buffer[-1] = temp_json_lines_buffer[-1][:end_marker_pos + 2]
+                    # Обрезаем последнюю строку до конца JSON-маркера
+                    temp_json_lines_buffer[-1] = temp_json_lines_buffer[-1][:end_marker_pos + 2] # +2 для "}}"
                 logger.debug(f"JSON_END. Buffer finalized. Last part: {temp_json_lines_buffer[-1][:200]}")
-            else: continue
-        
-        if not is_capturing_json_block and temp_json_lines_buffer: 
+            else:
+                continue # Продолжаем собирать строки
+
+        # Если блок JSON собран (is_capturing_json_block стало False и буфер не пуст)
+        if not is_capturing_json_block and temp_json_lines_buffer:
             if process_json_scoreboard_data(temp_json_lines_buffer):
                 json_block_was_processed_in_this_call = True
-            temp_json_lines_buffer = [] 
-            continue 
-        
-        if not is_capturing_json_block: 
-            chat_match = CHAT_REGEX_SAY.search(line_content) 
+            temp_json_lines_buffer = [] # Очищаем буфер после обработки
+            continue # Переходим к следующей строке лога, т.к. эта часть была JSON-блоком
+
+        # Если не в режиме захвата JSON, парсим как обычную строку (например, чат)
+        if not is_capturing_json_block:
+            chat_match = CHAT_REGEX_SAY.search(line_content)
             if chat_match:
                 extracted_data = chat_match.groupdict()
                 player_name_and_tags_str = extracted_data['player_name_and_tags']
+                # Извлекаем только имя игрока до тегов
                 name_match = re.search(r'^([^\<]+)', player_name_and_tags_str)
                 sender = html.escape(name_match.group(1).strip()) if name_match else html.escape(player_name_and_tags_str.strip())
                 message = html.escape(extracted_data['message'].strip())
-                timestamp = extracted_data.get('timestamp', 'N/A')
-                if not message: continue 
+                timestamp = extracted_data.get('timestamp', datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3])
+
+                if not message: continue # Пропускаем пустые сообщения
+
                 message_obj = {"ts": timestamp, "sender": sender, "msg": message}
                 parsed_chat_batch.append(message_obj)
                 new_chat_messages_count += 1
-    
+
     if parsed_chat_batch:
         chat_messages.extend(parsed_chat_batch)
         if new_chat_messages_count > 0:
             logger.info(f"Log Parser: Добавлено {new_chat_messages_count} сообщений чата.")
-    
+
     if json_block_was_processed_in_this_call:
         logger.info("Блок Scoreboard был обработан в этом POST-запросе (если данные были корректны).")
-        
+
     return jsonify({"status": "success", "message": f"Обработано {len(log_lines)} строк."}), 200
 
 # --- Существующие эндпоинты ---
@@ -303,6 +366,9 @@ def get_raw_log_lines():
 
 @app.route('/scoreboard_json', methods=['GET'])
 def get_scoreboard_data():
+    # Убедимся, что accountid удален из fields перед отправкой клиенту, если он там есть
+    # и что nickname всегда первый.
+    # Логика в process_json_scoreboard_data уже должна это делать.
     return jsonify(current_scoreboard_data)
 
 @app.route('/full_json', methods=['GET'])
@@ -310,7 +376,7 @@ def get_all_data_json():
     all_data = {
         "chat": list(chat_messages),
         "raw_logs": list(raw_log_lines),
-        "scoreboard": current_scoreboard_data,
+        "scoreboard": current_scoreboard_data, # Данные уже должны быть подготовлены
         "nickname_map": player_nickname_map
     }
     return jsonify(all_data)
@@ -340,5 +406,6 @@ def scoreboard_viewer_page():
 # --- Run Application ---
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
+    # debug=True полезно для разработки, но для продакшена лучше False
     app.run(host='0.0.0.0', port=port, debug=True)
 # ---------------------
