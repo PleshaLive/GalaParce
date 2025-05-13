@@ -24,13 +24,11 @@ MAX_CHAT_MESSAGES_DETECTED = 200 # Максимум для всех обнару
 MAX_RAW_LOGS = 300
 MAX_RAW_SCOREBOARD_INPUTS = 10 # Хранить последние N сырых JSON для scoreboard
 
-# NEW: Переименовано chat_messages и добавлены новые хранилища для "сырых" данных
-display_chat_messages = deque(maxlen=MAX_CHAT_MESSAGES_DISPLAY) # Только 'say' сообщения, обогащенные для UI
-all_detected_chat_log_entries = deque(maxlen=MAX_CHAT_MESSAGES_DETECTED) # Все записи, подошедшие под CHAT_REGEX_SAY (сырые данные)
-raw_scoreboard_json_inputs = deque(maxlen=MAX_RAW_SCOREBOARD_INPUTS) # Сырые JSON-строки/объекты для scoreboard
-
-raw_log_lines = deque(maxlen=MAX_RAW_LOGS) # Это уже содержит "чистейшие" строки логов
-current_scoreboard_data = {"fields": [], "players": []} # Обработанные данные scoreboard
+display_chat_messages = deque(maxlen=MAX_CHAT_MESSAGES_DISPLAY)
+all_detected_chat_log_entries = deque(maxlen=MAX_CHAT_MESSAGES_DETECTED)
+raw_scoreboard_json_inputs = deque(maxlen=MAX_RAW_SCOREBOARD_INPUTS)
+raw_log_lines = deque(maxlen=MAX_RAW_LOGS)
+current_scoreboard_data = {"fields": [], "players": []}
 player_nickname_map = {}
 # -----------------------
 
@@ -71,25 +69,22 @@ def strip_log_prefix(log_line_content):
     return (match_prefix.group(1) if match_prefix else log_line_content).strip()
 
 def process_json_scoreboard_data(json_lines_list_buffer):
-    global current_scoreboard_data, player_nickname_map, raw_scoreboard_json_inputs # Добавлено raw_scoreboard_json_inputs
+    global current_scoreboard_data, player_nickname_map, raw_scoreboard_json_inputs
     if not json_lines_list_buffer:
         logger.warning("process_json_scoreboard_data вызван с пустым буфером строк.")
         return False
     raw_json_str = "".join(json_lines_list_buffer)
-    json_to_parse = re.sub(r',\s*([\}\]])', r'\1', raw_json_str)
+    json_to_parse = re.sub(r',\s*([\}\]])', r'\1', raw_json_str) # Удаление висячих запятых
 
-    # NEW: Сохраняем сырой JSON (или попытку его представить как объект) перед парсингом
     input_data_for_log = json_to_parse
     try:
-        # Попытка загрузить как JSON, чтобы сохранить структуру, если это возможно
-        # Это делается только для логирования в raw_scoreboard_json_inputs, не для основного парсинга
-        input_data_for_log = json.loads(json_to_parse)
+        input_data_for_log = json.loads(json_to_parse) # Попытка сохранить как объект, если валидный JSON
     except json.JSONDecodeError:
-        pass # Оставляем json_to_parse как строку, если это не валидный JSON
+        pass # Оставляем как строку, если не валидный JSON для лога сырых входов
 
     raw_scoreboard_json_inputs.append({
         "timestamp": datetime.datetime.now().isoformat(),
-        "input_data": input_data_for_log # Может быть строкой или словарем/списком
+        "input_data": input_data_for_log
     })
 
     logger.debug(f"Попытка парсинга JSON для scoreboard (длина {len(json_to_parse)}). Начало: {json_to_parse[:1000]}...")
@@ -98,17 +93,19 @@ def process_json_scoreboard_data(json_lines_list_buffer):
         logger.info("УСПЕХ: JSON-блок scoreboard распарсен.")
         log_fields_str = scoreboard_payload.get("fields")
         log_players_dict_from_json = scoreboard_payload.get("players")
+
         if not isinstance(log_fields_str, str) or not log_fields_str.strip():
             logger.warning("Scoreboard JSON ОШИБКА: 'fields' отсутствуют, пустые или не являются строкой.")
             return False
         if not isinstance(log_players_dict_from_json, dict):
             logger.warning("Scoreboard JSON ОШИБКА: 'players' отсутствуют или не являются словарем.")
             return False
+
         original_fields_from_log = [f.strip() for f in log_fields_str.split(',') if f.strip()]
         if not original_fields_from_log:
-            logger.warning("Scoreboard JSON ОШИБКА: Список original_fields_from_log пуст после парсинга строки fields.")
+            logger.warning("Scoreboard JSON ОШИБКА: Список original_fields_from_log пуст.")
             return False
-        # ... (остальная логика функции без изменений, как в предыдущих версиях) ...
+
         display_fields = ['nickname']
         original_accountid_cased = None
         has_accountid_in_original = False
@@ -118,22 +115,25 @@ def process_json_scoreboard_data(json_lines_list_buffer):
                 has_accountid_in_original = True
             if f_val.lower() not in ['nickname', 'accountid']:
                 display_fields.append(f_val)
+        
+        # Добавляем accountid в конец (если был), JS его скроет, но может быть полезно иметь его в данных
         if has_accountid_in_original and original_accountid_cased:
             display_fields.append(original_accountid_cased)
         elif has_accountid_in_original:
              display_fields.append('accountid')
+
         current_scoreboard_data['fields'] = display_fields
         new_players_list = []
         for player_log_key, player_values_str_log in log_players_dict_from_json.items():
             if not isinstance(player_values_str_log, str):
-                logger.warning(f"Scoreboard JSON: Данные для игрока '{player_log_key}' не являются строкой.")
+                logger.warning(f"Scoreboard JSON: Данные для игрока '{player_log_key}' не строка.")
                 continue
             player_values_list = [v.strip() for v in player_values_str_log.split(',')]
             if len(player_values_list) == len(original_fields_from_log):
                 player_dict_temp = dict(zip(original_fields_from_log, player_values_list))
                 acc_id_val = None
                 found_accountid_key = None
-                for key_s in player_dict_temp.keys(): # Ищем 'accountid' регистронезависимо
+                for key_s in player_dict_temp.keys():
                     if key_s.lower() == 'accountid':
                         found_accountid_key = key_s
                         break
@@ -159,7 +159,7 @@ def process_json_scoreboard_data(json_lines_list_buffer):
     return False
 # -----------------------------
 
-# --- Base CSS and Navigation HTML (Без изменений по сравнению с предыдущим ответом) ---
+# --- Base CSS and Navigation HTML ---
 BASE_CSS = """<style>
 :root{
     --bg-color:#1a1d24; --container-bg:#232730; --container-border:#3b4048; --text-color:#cdd6f4; --text-muted:#a6adc8;
@@ -189,7 +189,7 @@ NAV_HTML = """<nav class="navigation">
 <a href="/full_json">Все данные (JSON)</a>
 </nav>"""
 
-# --- HTML Templates (Без изменений по сравнению с предыдущим ответом) ---
+# --- HTML Templates ---
 HTML_TEMPLATE_MAIN = """<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>CS2 Chat Viewer</title>
 <style>
     #chat-container{flex-grow:1;overflow-y:auto;padding-right:10px;display:flex;flex-direction:column;}
@@ -236,98 +236,69 @@ async function fetchScoreboardData(){if(isFetching||errorCount>=MAX_ERRORS)retur
 @app.route('/submit_logs', methods=['POST'])
 @app.route('/gsi', methods=['POST'])
 def receive_and_parse_logs_handler():
-    # Используем global для доступа к глобальным переменным
     global display_chat_messages, all_detected_chat_log_entries, raw_log_lines, \
            current_scoreboard_data, player_nickname_map, raw_scoreboard_json_inputs, \
            temp_json_lines_buffer, is_capturing_json_block
 
     log_lines = []
-    if request.is_json: # Обработка JSON запросов
+    if request.is_json:
         data = request.get_json()
-        if isinstance(data, dict) and 'lines' in data and isinstance(data.get('lines'), list):
-            log_lines = data.get('lines', [])
-        elif isinstance(data, list): # Если пришел просто список строк в JSON
-             log_lines = data
+        if isinstance(data, dict) and 'lines' in data and isinstance(data.get('lines'), list): log_lines = data.get('lines', [])
+        elif isinstance(data, list): log_lines = data
         else:
             logger.warning("Получен JSON, но ключ 'lines' отсутствует, не список, или формат неизвестен.")
-            raw_data_fallback = request.get_data(as_text=True) # Попытка прочитать как текст
+            raw_data_fallback = request.get_data(as_text=True)
             if raw_data_fallback: log_lines = raw_data_fallback.splitlines()
-    else: # Обработка не-JSON (текстовых) запросов
+    else:
         raw_data = request.get_data(as_text=True)
         if raw_data: log_lines = raw_data.splitlines()
 
-    if not log_lines:
-        return jsonify({"status": "error", "message": "Строки не предоставлены или не удалось их извлечь"}), 400
+    if not log_lines: return jsonify({"status": "error", "message": "Строки не предоставлены"}), 400
     
-    raw_log_lines.extend(log_lines) # Сохраняем все пришедшие строки в их "чистейшем" виде
+    raw_log_lines.extend(log_lines)
 
-    # Обновление карты никнеймов
     updated_nick_count = 0
     for line in log_lines:
         if not line: continue
         for match in PLAYER_INFO_REGEX.finditer(line):
-            player_info = match.groupdict()
-            account_id = player_info.get('accountid')
-            nickname = player_info.get('nickname')
+            player_info = match.groupdict(); account_id = player_info.get('accountid'); nickname = player_info.get('nickname')
             if account_id and nickname and player_nickname_map.get(account_id) != nickname:
-                player_nickname_map[account_id] = nickname
-                updated_nick_count += 1
-    if updated_nick_count > 0:
-        logger.info(f"Nickname map updated for {updated_nick_count} players.")
+                player_nickname_map[account_id] = nickname; updated_nick_count += 1
+    if updated_nick_count > 0: logger.info(f"Nickname map updated for {updated_nick_count} players.")
 
-    new_display_chat_messages_count = 0 # Счетчик для сообщений, идущих в UI чат
-    newly_added_to_all_detected_chat = 0 # Счетчик для всех обнаруженных чат-записей
+    new_display_chat_messages_count = 0
+    newly_added_to_all_detected_chat = 0
     json_block_was_processed_in_this_call = False
 
     for line_content in log_lines:
         if not line_content.strip(): continue
         
-        stripped_content_for_markers = strip_log_prefix(line_content) # Удаляем префикс лога для проверки JSON маркеров
+        stripped_content_for_markers = strip_log_prefix(line_content)
 
-        # Логика захвата JSON-блока для scoreboard
         if not is_capturing_json_block and "JSON_BEGIN{" in stripped_content_for_markers:
-            is_capturing_json_block = True
-            temp_json_lines_buffer = []
-            try:
-                actual_part = stripped_content_for_markers.split("JSON_BEGIN{", 1)[1]
-                temp_json_lines_buffer.append("{" + actual_part)
-            except IndexError:
-                logger.warning(f"Malformed JSON_BEGIN line (no content after marker): {line_content}")
-                is_capturing_json_block = False; continue
-            logger.debug(f"JSON_BEGIN. Buffer started with: {temp_json_lines_buffer[0][:200]}")
-            if "}}JSON_END" in temp_json_lines_buffer[0]: # Проверка на однострочный JSON
-                end_marker_pos = temp_json_lines_buffer[0].rfind("}}JSON_END")
-                temp_json_lines_buffer[0] = temp_json_lines_buffer[0][:end_marker_pos + 2]
+            is_capturing_json_block = True; temp_json_lines_buffer = []
+            try: actual_part = stripped_content_for_markers.split("JSON_BEGIN{", 1)[1]; temp_json_lines_buffer.append("{" + actual_part)
+            except IndexError: logger.warning(f"Malformed JSON_BEGIN line: {line_content}"); is_capturing_json_block = False; continue
+            if "}}JSON_END" in temp_json_lines_buffer[0]:
+                end_pos = temp_json_lines_buffer[0].rfind("}}JSON_END"); temp_json_lines_buffer[0] = temp_json_lines_buffer[0][:end_pos + 2]
                 is_capturing_json_block = False
-                logger.debug("Однострочный JSON блок будет обработан.")
-            else:
-                continue # Продолжаем собирать, если блок не завершен
+            else: continue 
         elif is_capturing_json_block:
-            temp_json_lines_buffer.append(stripped_content_for_markers) # Добавляем строку как есть (без префикса)
-            logger.debug(f"Added to JSON buffer: {stripped_content_for_markers[:200]}")
+            temp_json_lines_buffer.append(stripped_content_for_markers)
             if "}}JSON_END" in stripped_content_for_markers:
-                is_capturing_json_block = False
-                end_marker_pos = temp_json_lines_buffer[-1].rfind("}}JSON_END")
-                if end_marker_pos != -1:
-                    temp_json_lines_buffer[-1] = temp_json_lines_buffer[-1][:end_marker_pos + 2]
-                logger.debug(f"JSON_END. Buffer finalized. Last part: {temp_json_lines_buffer[-1][:200]}")
-            else:
-                continue # Продолжаем собирать
+                is_capturing_json_block = False; end_pos = temp_json_lines_buffer[-1].rfind("}}JSON_END")
+                if end_pos != -1: temp_json_lines_buffer[-1] = temp_json_lines_buffer[-1][:end_pos + 2]
+            else: continue
         
-        # Если блок JSON собран (is_capturing_json_block стало False и буфер не пуст)
         if not is_capturing_json_block and temp_json_lines_buffer:
-            if process_json_scoreboard_data(temp_json_lines_buffer):
-                json_block_was_processed_in_this_call = True
-            temp_json_lines_buffer = [] # Очищаем буфер после обработки
-            continue # Переходим к следующей строке лога, т.к. эта часть была JSON-блоком
+            if process_json_scoreboard_data(temp_json_lines_buffer): json_block_was_processed_in_this_call = True
+            temp_json_lines_buffer = []; continue
         
-        # Парсинг чат-сообщений (если это не JSON-блок)
         if not is_capturing_json_block:
-            chat_match = CHAT_REGEX_SAY.search(line_content) # Используем оригинальную строку с префиксом
+            chat_match = CHAT_REGEX_SAY.search(line_content)
             if chat_match:
                 extracted_data = chat_match.groupdict()
                 chat_command = extracted_data['chat_command'].lower()
-                # Для all_detected_chat_log_entries сохраняем неэкранированные данные
                 sender_name_raw = extracted_data['player_name'].strip()
                 message_text_raw = extracted_data['message'].strip()
                 timestamp_str = extracted_data.get('timestamp', datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3])
@@ -335,104 +306,66 @@ def receive_and_parse_logs_handler():
                 steamid_str = extracted_data['steamid']
                 userid_str = extracted_data['userid']
 
-                if not message_text_raw: # Пропускаем пустые сообщения
-                    continue
+                if not message_text_raw: continue
 
-                # NEW: Создаем "сырую" запись для all_detected_chat_log_entries
                 raw_chat_entry = {
-                    "timestamp": timestamp_str,
-                    "player_name": sender_name_raw,
-                    "message": message_text_raw,
-                    "chat_command": chat_command,
-                    "player_team_raw": player_team_raw, # Сохраняем как есть из лога
-                    "steamid": steamid_str,
-                    "userid": userid_str,
+                    "timestamp": timestamp_str, "player_name": sender_name_raw,
+                    "message": message_text_raw, "chat_command": chat_command,
+                    "player_team_raw": player_team_raw, "steamid": steamid_str, "userid": userid_str,
                 }
                 all_detected_chat_log_entries.append(raw_chat_entry)
                 newly_added_to_all_detected_chat +=1
 
-                # Фильтруем: обрабатываем для отображения только 'say'
                 if chat_command == "say":
-                    team_identifier = "Other" # По умолчанию
-                    if player_team_raw.upper() == "CT":
-                        team_identifier = "CT"
-                    elif player_team_raw.upper() == "TERRORIST" or player_team_raw.upper() == "T":
-                        team_identifier = "T"
-                    # Можно добавить другие команды (например, "SPECTATOR" -> "SPEC") если нужно
+                    team_identifier = "Other"
+                    if player_team_raw.upper() == "CT": team_identifier = "CT"
+                    elif player_team_raw.upper() == "TERRORIST" or player_team_raw.upper() == "T": team_identifier = "T"
                     
                     message_obj_for_display = {
-                        "ts": timestamp_str,
-                        "sender": html.escape(sender_name_raw), # Экранируем для безопасного отображения в HTML
-                        "msg": html.escape(message_text_raw),   # Экранируем для HTML
-                        "team": team_identifier # Идентификатор команды для UI
+                        "ts": timestamp_str, "sender": html.escape(sender_name_raw),
+                        "msg": html.escape(message_text_raw), "team": team_identifier
                     }
                     display_chat_messages.append(message_obj_for_display)
                     new_display_chat_messages_count += 1
     
-    # Логирование результатов обработки пачки логов
-    if new_display_chat_messages_count > 0:
-        logger.info(f"Log Parser: Добавлено {new_display_chat_messages_count} сообщений 'say' для отображения в чат.")
-    if newly_added_to_all_detected_chat > 0:
-        logger.info(f"Log Parser: Обнаружено и сохранено {newly_added_to_all_detected_chat} чат-подобных записей (включая say_team).")
-    if json_block_was_processed_in_this_call:
-        logger.info("Блок Scoreboard был обработан в этом POST-запросе.")
+    if new_display_chat_messages_count > 0: logger.info(f"Добавлено {new_display_chat_messages_count} 'say' сообщений для чата.")
+    if newly_added_to_all_detected_chat > 0: logger.info(f"Обнаружено {newly_added_to_all_detected_chat} чат-подобных записей.")
+    if json_block_was_processed_in_this_call: logger.info("Блок Scoreboard был обработан.")
         
     return jsonify({"status": "success", "message": f"Обработано {len(log_lines)} строк."}), 200
 
 # --- Эндпоинты ---
 @app.route('/chat', methods=['GET'])
-def get_structured_chat_data():
-    # Этот эндпоинт используется для отображения чата в UI, поэтому отдает обработанные сообщения
-    return jsonify(list(display_chat_messages))
+def get_structured_chat_data(): return jsonify(list(display_chat_messages))
 
 @app.route('/raw_json', methods=['GET'])
-def get_raw_log_lines():
-    # Этот эндпоинт уже предоставляет "чистейшие" строки логов, как они пришли
-    return jsonify(list(raw_log_lines))
+def get_raw_log_lines(): return jsonify(list(raw_log_lines))
 
 @app.route('/scoreboard_json', methods=['GET'])
-def get_scoreboard_data():
-    # Отдает обработанные данные scoreboard для UI
-    return jsonify(current_scoreboard_data)
+def get_scoreboard_data(): return jsonify(current_scoreboard_data)
 
-# NEW: Обновленный /full_json для предоставления "чистейших" данных
 @app.route('/full_json', methods=['GET'])
 def get_all_data_json():
-    all_data = {
-        "raw_incoming_logs": list(raw_log_lines),                             # Все строки как есть
-        "all_detected_chat_log_entries": list(all_detected_chat_log_entries), # Все, что подошло под CHAT_REGEX_SAY (say и say_team), базовая структура
-        "processed_chat_for_display": list(display_chat_messages),            # Отфильтрованные 'say' сообщения, обогащенные для UI
-        "raw_scoreboard_json_inputs": list(raw_scoreboard_json_inputs),       # Последние N сырых JSON-строк/объектов для scoreboard
-        "processed_scoreboard_data": current_scoreboard_data,                 # Результат парсинга scoreboard
-        "player_nickname_map": player_nickname_map                            # Карта никнеймов
-    }
-    return jsonify(all_data)
+    return jsonify({
+        "raw_incoming_logs": list(raw_log_lines),
+        "all_detected_chat_log_entries": list(all_detected_chat_log_entries),
+        "processed_chat_for_display": list(display_chat_messages),
+        "raw_scoreboard_json_inputs": list(raw_scoreboard_json_inputs),
+        "processed_scoreboard_data": current_scoreboard_data,
+        "player_nickname_map": player_nickname_map
+    })
 
 # --- HTML Page Routes ---
 @app.route('/', methods=['GET'])
-def index():
-    html_content = BASE_CSS + NAV_HTML + HTML_TEMPLATE_MAIN
-    return Response(html_content, mimetype='text/html')
-
+def index(): return Response(BASE_CSS + NAV_HTML + HTML_TEMPLATE_MAIN, mimetype='text/html')
 @app.route('/messages_only', methods=['GET'])
-def messages_only_page():
-    # Этот эндпоинт будет показывать только текстовое содержимое отфильтрованных 'say' сообщений
-    html_content = BASE_CSS + NAV_HTML + HTML_TEMPLATE_MSG_ONLY
-    return Response(html_content, mimetype='text/html')
-
+def messages_only_page(): return Response(BASE_CSS + NAV_HTML + HTML_TEMPLATE_MSG_ONLY, mimetype='text/html')
 @app.route('/raw_log_viewer', methods=['GET'])
-def raw_log_viewer_page():
-    html_content = BASE_CSS + NAV_HTML + HTML_TEMPLATE_LOG_ANALYZER
-    return Response(html_content, mimetype='text/html')
-
+def raw_log_viewer_page(): return Response(BASE_CSS + NAV_HTML + HTML_TEMPLATE_LOG_ANALYZER, mimetype='text/html')
 @app.route('/scoreboard_viewer', methods=['GET'])
-def scoreboard_viewer_page():
-    html_content = BASE_CSS + NAV_HTML + HTML_TEMPLATE_SCOREBOARD
-    return Response(html_content, mimetype='text/html')
-# ------------------------
+def scoreboard_viewer_page(): return Response(BASE_CSS + NAV_HTML + HTML_TEMPLATE_SCOREBOARD, mimetype='text/html')
 
 # --- Run Application ---
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=True) # debug=True для разработки
-# ---------------------
+    app.run(host='0.0.0.0', port=port, debug=True)
