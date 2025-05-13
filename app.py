@@ -14,7 +14,6 @@ app = Flask(__name__)
 CORS(app)
 
 # --- Logging Configuration ---
-# Уменьшим уровень логгирования для стандартных сообщений Flask/Werkzeug, оставив INFO для наших логов
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 
@@ -69,7 +68,6 @@ SCOREBOARD_PLAYER_REGEX = re.compile(
     re.VERBOSE | re.IGNORECASE
 )
 
-# --- НОВЫЙ Regex и Хранилище Никнеймов ---
 PLAYER_INFO_REGEX = re.compile(
     r"""
     \"(?P<nickname>.+?)       # Захват никнейма (нежадный)
@@ -93,7 +91,7 @@ NAV_HTML = """<nav class="navigation">
 </nav>"""
 # ----------------------------------
 
-# --- HTML Templates --- (Без изменений по сравнению с прошлым ответом, т.к. JS уже готов)
+# --- HTML Templates ---
 HTML_TEMPLATE_MAIN = """<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>CS2 Chat Viewer</title><style>#chat-container{flex-grow:1;overflow-y:auto;padding-right:10px;display:flex;flex-direction:column;}#chat-container-inner{margin-top:auto;padding-top:10px;}.message{margin-bottom:12px;padding:10px 15px;border-radius:8px;background-color:#2a2e37;border:1px solid #414550;word-wrap:break-word;line-height:1.5;max-width:85%;align-self:flex-start;}.message .timestamp{font-size:0.8em;color:var(--text-muted);margin-right:8px;opacity:0.7;}.message .sender{font-weight:600;color:var(--accent-color-1);margin-right:5px;}.message .text{}.loading-placeholder{align-self:center;color:var(--text-muted);margin-top:20px;}</style></head><body><div class="content-wrapper"><h1>CS2 Chat Viewer (Полный)</h1><div id="chat-container"><div id="chat-container-inner"><div class="message loading-placeholder">Загрузка сообщений...</div></div></div></div><div class="status-bar"><span id="status-text">Ожидание данных...</span><span id="loading-indicator" style="display: none;" class="loader"></span></div><script>const chatContainerInner=document.getElementById('chat-container-inner');const chatContainer=document.getElementById('chat-container');const statusText=document.getElementById('status-text');const loadingIndicator=document.getElementById('loading-indicator');let isFetching=!1,errorCount=0;const MAX_ERRORS=5;async function fetchMessages(){if(isFetching||errorCount>=MAX_ERRORS)return;isFetching=!0;loadingIndicator.style.display='inline-block';try{const response=await fetch('/chat');if(!response.ok)throw new Error('Ошибка сети: '+response.status);const messages=await response.json();const isScrolledToBottom=chatContainer.scrollTop+chatContainer.clientHeight>=chatContainer.scrollHeight-30;chatContainerInner.innerHTML='';if(messages.length===0){chatContainerInner.innerHTML='<div class="message loading-placeholder">Сообщений пока нет.</div>'}else{messages.forEach(data=>{const messageElement=document.createElement('div');messageElement.className='message';const timeSpan=document.createElement('span');timeSpan.className='timestamp';timeSpan.textContent=`[${data.ts}]`;const senderSpan=document.createElement('span');senderSpan.className='sender';senderSpan.textContent=data.sender+':';const textSpan=document.createElement('span');textSpan.className='text';textSpan.textContent=data.msg;messageElement.appendChild(timeSpan);messageElement.appendChild(senderSpan);messageElement.appendChild(textSpan);chatContainerInner.appendChild(messageElement)})}if(isScrolledToBottom){setTimeout(()=>{chatContainer.scrollTop=chatContainer.scrollHeight},0)}statusText.textContent='Обновлено: '+new Date().toLocaleTimeString();errorCount=0}catch(error){console.error('Ошибка:',error);statusText.textContent='Ошибка: '+error.message+'. #'+(errorCount+1);errorCount++;if(errorCount>=MAX_ERRORS){statusText.textContent+=' Автообновление остановлено.';clearInterval(intervalId)}}finally{isFetching=!1;loadingIndicator.style.display='none'}}const intervalId=setInterval(fetchMessages,3000);setTimeout(fetchMessages,500);</script></body></html>"""
 HTML_TEMPLATE_MSG_ONLY = """<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>CS2 Chat (Только сообщения)</title><style>#messages-list{font-family:var(--font-primary);font-size:1.05em;line-height:1.7;padding:15px;}#messages-list div{margin-bottom:8px;padding-left:10px;border-left:3px solid var(--accent-color-1);}.content-wrapper h1{margin-bottom:20px;}</style></head><body><div class="content-wrapper"><h1>Только сообщения</h1><div id="messages-list">Загрузка...</div></div><div class="status-bar"><span id="status-text">Ожидание данных...</span><span id="loading-indicator" style="display:none;" class="loader"></span></div><script>const container=document.getElementById('messages-list');const statusText=document.getElementById('status-text');const loadingIndicator=document.getElementById('loading-indicator');let isFetching=!1,errorCount=0;const MAX_ERRORS=5;async function fetchMsgOnly(){if(isFetching||errorCount>=MAX_ERRORS)return;isFetching=!0;loadingIndicator.style.display='inline-block';try{const response=await fetch('/chat');if(!response.ok)throw new Error('Network error');const messages=await response.json();const parentScrollTop=container.scrollTop;container.innerHTML='';if(messages.length===0){container.textContent='Нет сообщений.'}else{messages.forEach(data=>{const div=document.createElement('div');div.textContent=data.msg;container.appendChild(div)});window.scrollTo(0,document.body.scrollHeight)}statusText.textContent='Обновлено: '+new Date().toLocaleTimeString();errorCount=0}catch(error){container.textContent='Ошибка загрузки.';console.error(error);statusText.textContent='Ошибка: '+error.message+'. #'+(errorCount+1);errorCount++;if(errorCount>=MAX_ERRORS){statusText.textContent+=' Автообновление остановлено.';clearInterval(intervalId)}}finally{isFetching=!1;loadingIndicator.style.display='none'}}const intervalId=setInterval(fetchMsgOnly,3000);fetchMsgOnly();</script></body></html>"""
 HTML_TEMPLATE_LOG_ANALYZER = """<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>CS2 Log Analyzer</title><style>.content-wrapper h1{margin-bottom:20px;}#log-analyzer-output{font-family:var(--font-mono);font-size:13px;line-height:1.6;flex-grow:1;overflow-y:auto;padding:10px;background-color:#181a1f;border-radius:6px;}.log-line{margin-bottom:3px;padding:2px 5px;border-radius:3px;white-space:pre-wrap;word-break:break-all;cursor:default;}.log-line.chat{background-color:#36485e;color:#a6e3a1;border-left:3px solid #a6e3a1;}.log-line.kill{background-color:#5c374f;color:#f38ba8;border-left:3px solid #f38ba8;}.log-line.damage{background-color:#6e584c;color:#fab387;}.log-line.grenade{background-color:#3e4b6e;color:#cba6f7;}.log-line.purchase{background-color:#2e535e;color:#89dceb;}.log-line.pickup{background-color:#3e5a6e;color:#94e2d5;}.log-line.connect{color:#a6e3a1;}.log-line.disconnect{color:#f38ba8;}.log-line.system{color:var(--text-muted);font-style:italic;}.log-line.unknown{color:var(--text-muted);opacity:0.8;}</style></head><body><div class="content-wrapper"><h1>Анализатор Логов CS2</h1><div id="log-analyzer-output">Загрузка логов...</div></div><div class="status-bar"><span id="status-text">Ожидание данных...</span><span id="loading-indicator" style="display:none;" class="loader"></span></div><script>const outputContainer=document.getElementById('log-analyzer-output');const statusText=document.getElementById('status-text');const loadingIndicator=document.getElementById('loading-indicator');let isFetching=!1,errorCount=0;const MAX_ERRORS=5;const chatRegex=/(\\".+?\\"<\\d+><\\[U:\\d:\\d+\\]><\w+>)\\s+(?:say|say_team)\\s+\\"([^\\"]*)\\"/i;const killRegex=/killed\\s+\\".+?\\"<\\d+>/i;const damageRegex=/attacked\\s+\\".+?\\"<\\d+><.+?>.*\\(damage\\s+\\"\\d+\\"\\)/i;const grenadeRegex=/threw\\s+(hegrenade|flashbang|smokegrenade|molotov|decoy)/i;const connectRegex=/connected|entered the game/i;const disconnectRegex=/disconnected|left the game/i;const purchaseRegex=/purchased\\s+\\"(\\w+)\\"/i;const pickupRegex=/picked up\\s+\\"(\\w+)\\"/i;const teamSwitchRegex=/switched team to/i;const nameChangeRegex=/changed name to/i;function getLogLineInfo(line){if(chatRegex.test(line))return{type:'Чат',class:'chat'};if(killRegex.test(line))return{type:'Убийство',class:'kill'};if(damageRegex.test(line))return{type:'Урон',class:'damage'};if(grenadeRegex.test(line))return{type:'Граната',class:'grenade'};if(purchaseRegex.test(line))return{type:'Покупка',class:'purchase'};if(pickupRegex.test(line))return{type:'Подбор',class:'pickup'};if(connectRegex.test(line))return{type:'Подключение',class:'connect'};if(disconnectRegex.test(line))return{type:'Отключение',class:'disconnect'};if(teamSwitchRegex.test(line))return{type:'Смена команды',class:'system'};if(nameChangeRegex.test(line))return{type:'Смена ника',class:'system'};return{type:'Неизвестно/Система',class:'unknown'}}async function fetchAndAnalyzeLogs(){if(isFetching||errorCount>=MAX_ERRORS)return;isFetching=!0;loadingIndicator.style.display='inline-block';try{const response=await fetch('/raw_json');if(!response.ok)throw new Error('Ошибка сети: '+response.status);const logLines=await response.json();const isScrolledToBottom=outputContainer.scrollTop+outputContainer.clientHeight>=outputContainer.scrollHeight-50;outputContainer.innerHTML='';if(logLines.length===0){outputContainer.textContent='Нет данных лога для анализа.'}else{logLines.forEach(line=>{const info=getLogLineInfo(line);const lineDiv=document.createElement('div');lineDiv.className=`log-line ${info.class}`;lineDiv.textContent=line;lineDiv.title=`Тип: ${info.type}`;outputContainer.appendChild(lineDiv)})}if(isScrolledToBottom){setTimeout(()=>{outputContainer.scrollTop=outputContainer.scrollHeight},0)}statusText.textContent='Обновлено: '+new Date().toLocaleTimeString()+` (${logLines.length} строк)`;errorCount=0}catch(error){outputContainer.textContent='Ошибка загрузки или анализа логов.';console.error(error);statusText.textContent='Ошибка: '+error.message+'. #'+(errorCount+1);errorCount++;if(errorCount>=MAX_ERRORS){statusText.textContent+=' Автообновление остановлено.';clearInterval(intervalId)}}finally{isFetching=!1;loadingIndicator.style.display='none'}}const intervalId=setInterval(fetchAndAnalyzeLogs,5000);fetchAndAnalyzeLogs();</script></body></html>"""
@@ -130,14 +128,9 @@ async function fetchScoreboardData(){if(isFetching||errorCount>=MAX_ERRORS)retur
 @app.route('/submit_logs', methods=['POST'])
 @app.route('/gsi', methods=['POST'])
 def receive_and_parse_logs_handler():
-    """
-    Получает строки логов, обновляет карту никнеймов,
-    парсит чат и scoreboard, добавляя никнеймы к данным scoreboard.
-    """
-    global chat_messages, raw_log_lines, current_scoreboard_data, player_nickname_map # Добавили player_nickname_map
+    global chat_messages, raw_log_lines, current_scoreboard_data, player_nickname_map
     log_lines = []
 
-    # Получение логов (JSON или raw)
     if request.is_json:
         data = request.get_json()
         if isinstance(data, dict) and 'lines' in data and isinstance(data.get('lines'), list):
@@ -153,9 +146,8 @@ def receive_and_parse_logs_handler():
         app.logger.warning("Запрос получен, но строки логов не найдены.")
         return jsonify({"status": "error", "message": "Строки не предоставлены или неверный формат"}), 400
 
-    raw_log_lines.extend(log_lines) # Сохраняем сырые логи
+    raw_log_lines.extend(log_lines)
 
-    # --- Обновление карты никнеймов ---
     updated_nick_count = 0
     for line in log_lines:
         if not line: continue
@@ -164,27 +156,22 @@ def receive_and_parse_logs_handler():
             account_id = player_info.get('accountid')
             nickname = player_info.get('nickname')
             if account_id and nickname:
-                # Обновляем только если ник отличается или ID новый
                 if player_nickname_map.get(account_id) != nickname:
                      player_nickname_map[account_id] = nickname
                      updated_nick_count += 1
     if updated_nick_count > 0:
         app.logger.info(f"Nickname map updated for {updated_nick_count} players.")
-    # --- Конец обновления карты никнеймов ---
 
     new_chat_messages_count = 0
     parsed_chat_batch = []
-    new_scoreboard_data_parsed = False
-    temp_scoreboard_players = []
+    new_scoreboard_data_parsed_this_batch = False # Флаг для текущей пачки
+    temp_scoreboard_players_this_batch = [] # Игроки только из этой пачки
 
-    # Обработка каждой строки лога
     for line in log_lines:
         if not line: continue
 
-        # Парсинг чата
         chat_match = CHAT_REGEX_SAY.search(line)
         if chat_match:
-            # ... (логика парсинга чата без изменений) ...
             extracted_data = chat_match.groupdict()
             player_name_and_tags_str = extracted_data['player_name_and_tags']
             name_match = re.search(r'^([^\<]+)', player_name_and_tags_str)
@@ -197,57 +184,105 @@ def receive_and_parse_logs_handler():
             new_chat_messages_count += 1
             continue
 
-        # Парсинг полей scoreboard
+        # --- ИЗМЕНЕННЫЙ БЛОК ОБРАБОТКИ 'fields' ---
         fields_match = SCOREBOARD_FIELDS_REGEX.search(line)
         if fields_match:
-             # ... (логика парсинга полей scoreboard без изменений) ...
             field_list_str = fields_match.group('field_list')
-            new_fields = [f.strip() for f in field_list_str.split(',') if f.strip()]
-            if new_fields:
-                if new_fields != current_scoreboard_data.get('fields'):
-                    current_scoreboard_data['fields'] = new_fields
-                    current_scoreboard_data['players'] = []
-                    temp_scoreboard_players = []
-                    new_scoreboard_data_parsed = True
-                    app.logger.info(f"Scoreboard: Обновлены поля: {current_scoreboard_data['fields']}")
+            new_fields_from_log = [f.strip() for f in field_list_str.split(',') if f.strip()]
+
+            final_fields_for_frontend = []
+            if not any(f.lower() == 'nickname' for f in new_fields_from_log):
+                final_fields_for_frontend.append('nickname')
+            
+            for f_log in new_fields_from_log:
+                if f_log.lower() not in [f_final.lower() for f_final in final_fields_for_frontend]:
+                    final_fields_for_frontend.append(f_log)
+            
+            # Убедимся, что 'accountid' присутствует, если он был в исходных полях лога,
+            # так как он используется для создания player_dict через zip.
+            # JavaScript скроет колонку 'accountid'.
+            if any(f.lower() == 'accountid' for f in new_fields_from_log) and \
+               not any(f.lower() == 'accountid' for f in final_fields_for_frontend):
+                # Находим индекс accountid в оригинальных полях и вставляем, если он там был
+                try:
+                    original_accountid_index = [f.lower() for f in new_fields_from_log].index('accountid')
+                    final_fields_for_frontend.insert(original_accountid_index + (1 if final_fields_for_frontend and final_fields_for_frontend[0].lower() == 'nickname' and 'nickname' not in [f.lower() for f in new_fields_from_log] else 0), new_fields_from_log[original_accountid_index])
+                except ValueError:
+                    pass # accountid не был в new_fields_from_log
+
+            if final_fields_for_frontend:
+                if final_fields_for_frontend != current_scoreboard_data.get('fields'):
+                    current_scoreboard_data['fields'] = final_fields_for_frontend
+                    current_scoreboard_data['players'] = [] # Сбрасываем игроков при смене полей
+                    # temp_scoreboard_players_this_batch останется пустым, т.к. ждем player_X строк
+                    new_scoreboard_data_parsed_this_batch = True 
+                    app.logger.info(f"Scoreboard: Поля обновлены и установлены в: {current_scoreboard_data['fields']}")
             else:
                  app.logger.warning(f"Scoreboard: Получена пустая строка полей: {line}")
             continue
+        # --- КОНЕЦ ИЗМЕНЕННОГО БЛОКА ---
 
-        # Парсинг данных игрока scoreboard
         player_match = SCOREBOARD_PLAYER_REGEX.search(line)
         if player_match and current_scoreboard_data.get('fields'):
             player_data_str = player_match.group('player_data')
             player_values = [v.strip() for v in player_data_str.split(',')]
+
+            # Важно: current_scoreboard_data['fields'] может содержать 'nickname',
+            # которого нет в player_values из лога. Zip будет работать по наименьшей длине.
+            # Поэтому мы должны использовать new_fields_from_log (или их аналог) для zip,
+            # а потом добавлять 'nickname'.
+            # ИЛИ, если 'nickname' уже в current_scoreboard_data['fields'], то player_values должны ему соответствовать.
+            # Проще всего: player_dict создается по current_scoreboard_data['fields'],
+            # но значения для 'nickname' берутся из player_nickname_map.
+
             if len(player_values) == len(current_scoreboard_data['fields']):
+                 # Это условие может быть ложным, если мы добавили 'nickname' в fields,
+                 # а player_values его не содержит.
+                 # Правильнее было бы сопоставлять с `new_fields_from_log` при создании `player_dict`
+                 # а потом добавлять ник.
+                 # Однако, если `current_scoreboard_data['fields']` *всегда* включает `nickname` *и*
+                 # оригинальные поля (включая `accountid`), то `dict(zip(...))` отработает,
+                 # но для ключа `nickname` значением будет что-то из `player_values`, что неправильно.
+
+                 # Исправленный подход: создаем словарь на основе полей из лога, затем добавляем ник.
+                 # Для этого нам нужно сохранить `new_fields_from_log` из момента парсинга "fields".
+                 # Это усложняет. Давайте упростим:
+                 # player_dict будет содержать ключ 'nickname' из-за zip, но значение будет неверным.
+                 # Мы его перезапишем.
+
                 player_dict = dict(zip(current_scoreboard_data['fields'], player_values))
-
-                # --- Добавление никнейма из карты ---
-                player_account_id = player_dict.get('accountid')
+                
+                player_account_id = player_dict.get('accountid') # accountid должен быть в fields
                 if player_account_id:
-                    # Используем ID как запасной вариант, если ник не найден
                     nickname = player_nickname_map.get(player_account_id, f"ID:{player_account_id}")
-                    player_dict['nickname'] = nickname # Добавляем поле
+                    player_dict['nickname'] = nickname # Перезаписываем или добавляем
                 else:
-                    # Если accountid отсутствует в данных scoreboard (маловероятно, но возможно)
-                     player_dict['nickname'] = 'Unknown'
-                # --- Конец добавления никнейма ---
+                    # Если accountid нет, то и ник не найти. Для поля 'nickname' ставим заглушку.
+                    if 'nickname' in player_dict: # Если nickname был в fields
+                         player_dict['nickname'] = 'Unknown Nick (no ID)'
+                    # Если nickname не было в fields, он и не добавится здесь.
 
-                temp_scoreboard_players.append(player_dict)
-                new_scoreboard_data_parsed = True
+                temp_scoreboard_players_this_batch.append(player_dict)
+                new_scoreboard_data_parsed_this_batch = True
             else:
-                app.logger.warning(f"Scoreboard: Несоответствие значений ({len(player_values)}) и полей ({len(current_scoreboard_data['fields'])}). Строка: {line}")
+                app.logger.warning(
+                    f"Scoreboard: Несоответствие значений ({len(player_values)}) и полей "
+                    f"({len(current_scoreboard_data['fields'])} -> {current_scoreboard_data['fields']}). "
+                    f"Строка игрока: {player_data_str}. Строка лога: {line}"
+                )
             continue
 
-    # Обновление глобальных данных
     if parsed_chat_batch:
         chat_messages.extend(parsed_chat_batch)
         if new_chat_messages_count > 0:
              app.logger.info(f"Log Parser: Добавлено {new_chat_messages_count} сообщений чата.")
-    if temp_scoreboard_players:
-         current_scoreboard_data['players'].extend(temp_scoreboard_players)
-         if new_scoreboard_data_parsed:
-             app.logger.info(f"Scoreboard: Добавлено/обновлено {len(temp_scoreboard_players)} игроков (с попыткой добавить никнеймы).")
+
+    if new_scoreboard_data_parsed_this_batch: # Если были новые поля ИЛИ новые игроки
+        # Если поля не менялись, но пришли новые игроки, current_scoreboard_data['players'] не был сброшен.
+        # Если поля менялись, current_scoreboard_data['players'] был сброшен.
+        # В любом случае, добавляем игроков из текущей пачки.
+        current_scoreboard_data['players'].extend(temp_scoreboard_players_this_batch)
+        app.logger.info(f"Scoreboard: Добавлено/обновлено {len(temp_scoreboard_players_this_batch)} игроков.")
 
     return jsonify({"status": "success", "message": f"Обработано {len(log_lines)} строк."}), 200
 
@@ -262,18 +297,15 @@ def get_raw_log_lines():
 
 @app.route('/scoreboard_json', methods=['GET'])
 def get_scoreboard_data():
-    # Теперь этот эндпоинт будет возвращать данные игроков с добавленным полем 'nickname'
     return jsonify(current_scoreboard_data)
 
-# --- НОВЫЙ Эндпоинт ---
 @app.route('/full_json', methods=['GET'])
 def get_all_data_json():
-    """Возвращает все собранные данные в одном JSON объекте."""
     all_data = {
         "chat": list(chat_messages),
         "raw_logs": list(raw_log_lines),
         "scoreboard": current_scoreboard_data,
-        "nickname_map": player_nickname_map # Добавим и карту ников для отладки
+        "nickname_map": player_nickname_map
     }
     return jsonify(all_data)
 
@@ -295,7 +327,6 @@ def raw_log_viewer_page():
 
 @app.route('/scoreboard_viewer', methods=['GET'])
 def scoreboard_viewer_page():
-    # Этот шаблон уже настроен на поиск 'nickname' и скрытие 'accountid'
     html_content = BASE_CSS + NAV_HTML + HTML_TEMPLATE_SCOREBOARD
     return Response(html_content, mimetype='text/html')
 # ------------------------
@@ -303,7 +334,5 @@ def scoreboard_viewer_page():
 # --- Run Application ---
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
-    # debug=True полезен для разработки, чтобы видеть ошибки и автоперезагрузку
-    # Не забудьте установить debug=False для продакшена
     app.run(host='0.0.0.0', port=port, debug=True)
 # ---------------------
