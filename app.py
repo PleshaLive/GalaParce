@@ -38,13 +38,13 @@ CHAT_REGEX_SAY = re.compile(
     ^\s* # Start of line, optional whitespace
     (?:\d{2}\/\d{2}\/\d{4}\s+-\s+)?          # Optional Date (DD/MM/YYYY - )
     (?P<timestamp>\d{2}:\d{2}:\d{2}\.\d{3})      # Timestamp (HH:MM:SS.ms)
-    \s+-\s+                                  # Separator " - "
+    \s+-\s+                                      # Separator " - "
     \"(?P<player_name>.+?)<(?P<userid>\d+)><(?P<steamid>\[U:\d:\d+\])><(?P<player_team>\w+)>\" # Player name, userid, steamid, team
-    \s+                                      # Space
-    (?P<chat_command>say|say_team)           # Chat command: say or say_team
-    \s+                                      # Space
-    \"(?P<message>.*)\"                      # Message content within quotes
-    \s*$                                     # Optional whitespace, end of line
+    \s+                                          # Space
+    (?P<chat_command>say|say_team)               # Chat command: say or say_team
+    \s+                                          # Space
+    \"(?P<message>.*)\"                          # Message content within quotes
+    \s*$                                         # Optional whitespace, end of line
     """,
     re.VERBOSE | re.IGNORECASE
 )
@@ -106,26 +106,14 @@ def process_json_scoreboard_data(json_lines_list_buffer):
             logger.warning("Scoreboard JSON ОШИБКА: Список original_fields_from_log пуст.")
             return False
 
-        display_fields = ['nickname'] # Всегда начинаем с nickname
-        # Поля, которые мы хотим видеть в scoreboard (помимо nickname)
-        # Вы можете настроить этот список или сделать его более динамичным на основе original_fields_from_log
-        # ВАЖНО: Убедитесь, что эти ключи (Kills, Deaths, Assists, Score, money, team) 
-        # соответствуют именам полей в вашем "fields" JSON или их нужно будет смапить.
-        # Для примера, я буду использовать стандартные названия, но вам нужно будет их адаптировать.
-        # Предположим, что в original_fields_from_log есть 'kills', 'deaths', 'assists', 'score', 'money', 'team'
-        # Эти имена чувствительны к регистру, если вы обращаетесь к ним по ключу в player_dict_temp.
+        display_fields = ['nickname'] 
         
-        # Собираем поля для отображения, пропуская 'accountid' и 'nickname' (т.к. nickname уже первый)
-        # и сохраняем оригинальное написание 'accountid'
         original_accountid_cased = None
         has_accountid_in_original = False
-
-        # Ключевые поля, которые мы хотим отобразить и их порядок (кроме nickname)
-        # Адаптируйте эти имена к тем, что приходят в вашем 'fields'
+        
         desired_stat_fields = ['team','score', 'kills', 'deaths', 'assists', 'money', 'dmg', 'adr', 'kdr', 'hsp', 'mvp'] 
-                                # Добавьте или измените поля по необходимости
-
-        temp_display_fields = {} # Для сохранения оригинального регистра
+        
+        temp_display_fields = {} 
 
         for f_val in original_fields_from_log:
             f_val_lower = f_val.lower()
@@ -133,17 +121,12 @@ def process_json_scoreboard_data(json_lines_list_buffer):
                 original_accountid_cased = f_val
                 has_accountid_in_original = True
             if f_val_lower not in ['nickname', 'accountid']:
-                 # Сохраняем оригинальное имя поля для использования в display_fields,
-                 # но будем использовать lower-case для проверки наличия в desired_stat_fields
-                 temp_display_fields[f_val_lower] = f_val
+                temp_display_fields[f_val_lower] = f_val
 
-
-        # Добавляем желаемые поля в display_fields в заданном порядке, если они есть
         for key in desired_stat_fields:
             if key in temp_display_fields:
                 display_fields.append(temp_display_fields[key])
-            # Если какие-то из desired_stat_fields не были в original_fields_from_log, они не добавятся
-
+        
         current_scoreboard_data['fields'] = display_fields
         new_players_list = []
 
@@ -157,8 +140,6 @@ def process_json_scoreboard_data(json_lines_list_buffer):
                 player_dict_temp = dict(zip(original_fields_from_log, player_values_list))
                 
                 acc_id_val = None
-                # Ищем accountid регистронезависимо в ключах player_dict_temp
-                # Это более надежно, чем полагаться на позицию в original_fields_from_log
                 for key_s in player_dict_temp.keys():
                     if key_s.lower() == 'accountid':
                         acc_id_val = player_dict_temp[key_s]
@@ -168,15 +149,9 @@ def process_json_scoreboard_data(json_lines_list_buffer):
                     nick = player_nickname_map.get(acc_id_val, f"ID:{acc_id_val}")
                     player_dict_temp['nickname'] = nick
                 else:
-                    player_name_from_stats = player_dict_temp.get('name', 'Spectator/Bot') # Если в 'fields' есть 'name'
+                    player_name_from_stats = player_dict_temp.get('name', 'Spectator/Bot') 
                     player_dict_temp['nickname'] = player_name_from_stats if ((not acc_id_val or acc_id_val == "0") and player_name_from_stats != 'Spectator/Bot') else 'Spectator/Bot'
                 
-                # Важно: для JavaScript разделения по командам, в player_dict_temp должно быть поле 'team'
-                # Убедимся, что оно есть, если пришло в original_fields_from_log (например, как 'team')
-                # Если поле команды называется иначе в 'fields', его нужно смапить на ключ 'team' здесь.
-                # Пример: if 'TeamID' in player_dict_temp: player_dict_temp['team'] = player_dict_temp['TeamID']
-                # Если оно уже 'team', то ничего делать не надо.
-
                 new_players_list.append(player_dict_temp)
             else:
                 logger.warning(f"Scoreboard JSON ОШИБКА ДЛИН: Игрок '{player_log_key}'")
@@ -236,7 +211,7 @@ h2{font-size: 1.5rem; color: var(--primary-text-color);}
 .navigation a:hover,.navigation a:focus{background-color:var(--link-hover-bg);color:var(--primary-text-color);outline:none;}
 .nav-separator{color:var(--secondary-text-color);opacity:0.6;}
 .content-wrapper{background-color:var(--surface-color);border:1px solid var(--border-color);border-radius:12px;padding:25px;box-shadow:0 6px 20px rgba(0,0,0,0.25);flex-grow:1;display:flex;flex-direction:column;min-height:400px;}
-.status-bar{text-align:center;font-size:0.95em;color:var(--secondary-text-color);padding:20px 0 10px 0;height:25px;}
+.status-bar{text-align:center;font-size:0.95em;color:var(--secondary-text-color);padding:20px 0 10px 0;height:25px;} /* Original height: 25px, padding: 20px 0 10px 0 */
 .status-bar .loader{border:3px solid var(--border-color);border-radius:50%;border-top:3px solid var(--accent-color-1);width:16px;height:16px;animation:spin 1s linear infinite;display:inline-block;margin-left:10px;vertical-align:middle;}
 @keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}
 </style>"""
@@ -245,8 +220,9 @@ NAV_HTML = """<nav class="navigation">
 <a href="/messages_only">Только сообщения</a><span class="nav-separator">|</span>
 <a href="/raw_log_viewer">Анализатор Логов</a><span class="nav-separator">|</span>
 <a href="/scoreboard_viewer">Таблица счета</a><span class="nav-separator">|</span>
-<a href="/full_json">Все данные (JSON)</a>
-</nav>"""
+<a href="/full_json">Все данные (JSON)</a><span class="nav-separator">|</span>
+<a href="/chat_only_nicknames">Только Чат (Ники)</a>
+</nav>""" # Добавлена ссылка на новую страницу
 
 # --- HTML Templates ---
 HTML_TEMPLATE_MAIN = """<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>CS2 Chat Viewer</title>
@@ -270,9 +246,6 @@ const intervalId=setInterval(fetchMessages,3000);setTimeout(fetchMessages,500);
 </body></html>"""
 HTML_TEMPLATE_MSG_ONLY = """<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>CS2 Chat (Только сообщения)</title><style>#messages-list{font-family:var(--font-primary);font-size:1.05em;line-height:1.7;padding:15px;}#messages-list div{margin-bottom:8px;padding:10px 15px;border-radius:8px; background-color: var(--player-entry-bg); border-left:4px solid var(--accent-color-1); color: var(--primary-text-color);}.content-wrapper h1{margin-bottom:20px;}</style></head><body><div class="content-wrapper"><h1>Только сообщения</h1><div id="messages-list">Загрузка...</div></div><div class="status-bar"><span id="status-text">Ожидание данных...</span><span id="loading-indicator" style="display:none;" class="loader"></span></div><script>const container=document.getElementById('messages-list');const statusText=document.getElementById('status-text');const loadingIndicator=document.getElementById('loading-indicator');let isFetching=!1,errorCount=0;const MAX_ERRORS=5;async function fetchMsgOnly(){if(isFetching||errorCount>=MAX_ERRORS)return;isFetching=!0;loadingIndicator.style.display='inline-block';try{const response=await fetch('/chat');if(!response.ok)throw new Error('Network error');const messages=await response.json();container.innerHTML='';if(messages.length===0){container.textContent='Нет сообщений.'}else{messages.forEach(data=>{const div=document.createElement('div');div.textContent=data.msg;container.appendChild(div)});window.scrollTo(0,document.body.scrollHeight)}statusText.textContent='Обновлено: '+new Date().toLocaleTimeString();errorCount=0}catch(error){container.textContent='Ошибка загрузки.';console.error(error);statusText.textContent='Ошибка: '+error.message+'. #'+(errorCount+1);errorCount++;if(errorCount>=MAX_ERRORS){statusText.textContent+=' Автообновление остановлено.';clearInterval(intervalId)}}finally{isFetching=!1;loadingIndicator.style.display='none'}}const intervalId=setInterval(fetchMsgOnly,3000);fetchMsgOnly();</script></body></html>"""
 HTML_TEMPLATE_LOG_ANALYZER = """<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><title>CS2 Log Analyzer</title><style>.content-wrapper h1{margin-bottom:20px;}#log-analyzer-output{font-family:var(--font-mono);font-size:0.8rem;line-height:1.7;flex-grow:1;overflow-y:auto;padding:15px;background-color:#171717;border-radius:8px; border: 1px solid var(--border-color);}.log-line{margin-bottom:4px;padding:3px 8px;border-radius:4px;white-space:pre-wrap;word-break:break-all;cursor:default; transition: background-color 0.2s;}.log-line:hover{background-color: #2A2A2A;}.log-line.chat{background-color:rgba(13,202,240,0.1);color:#89dceb;border-left:3px solid var(--accent-color-1);}.log-line.kill{background-color:rgba(243,139,168,0.1);color:#f38ba8;border-left:3px solid var(--error-color);}.log-line.damage{background-color:rgba(250,176,135,0.1);color:#fab387;}.log-line.grenade{background-color:rgba(203,166,247,0.1);color:#cba6f7;}.log-line.purchase{background-color:rgba(137,220,235,0.1);color:#89dceb;}.log-line.pickup{background-color:rgba(148,226,213,0.1);color:#94e2d5;}.log-line.connect{color:#a6e3a1;}.log-line.disconnect{color:#f38ba8;}.log-line.system{color:var(--secondary-text-color);font-style:italic;}.log-line.unknown{color:var(--secondary-text-color);opacity:0.7;}</style></head><body><div class="content-wrapper"><h1>Анализатор Логов CS2</h1><div id="log-analyzer-output">Загрузка логов...</div></div><div class="status-bar"><span id="status-text">Ожидание данных...</span><span id="loading-indicator" style="display:none;" class="loader"></span></div><script>const outputContainer=document.getElementById('log-analyzer-output');const statusText=document.getElementById('status-text');const loadingIndicator=document.getElementById('loading-indicator');let isFetching=!1,errorCount=0;const MAX_ERRORS=5;const chatRegex=/(\\".+?\\"<\\d+><\\[U:\\d:\\d+\\]><\w+>)\\s+(?:say|say_team)\\s+\\"([^\\"]*)\\"/i;const killRegex=/killed\\s+\\".+?\\"<\\d+>/i;const damageRegex=/attacked\\s+\\".+?\\"<\\d+><.+?>.*\\(damage\\s+\\"\\d+\\"\\)/i;const grenadeRegex=/threw\\s+(hegrenade|flashbang|smokegrenade|molotov|decoy)/i;const connectRegex=/connected|entered the game/i;const disconnectRegex=/disconnected|left the game/i;const purchaseRegex=/purchased\\s+\\"(\\w+)\\"/i;const pickupRegex=/picked up\\s+\\"(\\w+)\\"/i;const teamSwitchRegex=/switched team to/i;const nameChangeRegex=/changed name to/i;function getLogLineInfo(line){if(chatRegex.test(line))return{type:'Чат',class:'chat'};if(killRegex.test(line))return{type:'Убийство',class:'kill'};if(damageRegex.test(line))return{type:'Урон',class:'damage'};if(grenadeRegex.test(line))return{type:'Граната',class:'grenade'};if(purchaseRegex.test(line))return{type:'Покупка',class:'purchase'};if(pickupRegex.test(line))return{type:'Подбор',class:'pickup'};if(connectRegex.test(line))return{type:'Подключение',class:'connect'};if(disconnectRegex.test(line))return{type:'Отключение',class:'disconnect'};if(teamSwitchRegex.test(line))return{type:'Смена команды',class:'system'};if(nameChangeRegex.test(line))return{type:'Смена ника',class:'system'};return{type:'Неизвестно/Система',class:'unknown'}}async function fetchAndAnalyzeLogs(){if(isFetching||errorCount>=MAX_ERRORS)return;isFetching=!0;loadingIndicator.style.display='inline-block';try{const response=await fetch('/raw_json');if(!response.ok)throw new Error('Ошибка сети: '+response.status);const logLines=await response.json();const isScrolledToBottom=outputContainer.scrollTop+outputContainer.clientHeight>=outputContainer.scrollHeight-50;outputContainer.innerHTML='';if(logLines.length===0){outputContainer.textContent='Нет данных лога для анализа.'}else{logLines.forEach(line=>{const info=getLogLineInfo(line);const lineDiv=document.createElement('div');lineDiv.className=`log-line ${info.class}`;lineDiv.textContent=line;lineDiv.title=`Тип: ${info.type}`;outputContainer.appendChild(lineDiv)})}if(isScrolledToBottom){setTimeout(()=>{outputContainer.scrollTop=outputContainer.scrollHeight},0)}statusText.textContent='Обновлено: '+new Date().toLocaleTimeString()+` (${logLines.length} строк)`;errorCount=0}catch(error){outputContainer.textContent='Ошибка загрузки или анализа логов.';console.error(error);statusText.textContent='Ошибка: '+error.message+'. #'+(errorCount+1);errorCount++;if(errorCount>=MAX_ERRORS){statusText.textContent+=' Автообновление остановлено.';clearInterval(intervalId)}}finally{isFetching=!1;loadingIndicator.style.display='none'}}const intervalId=setInterval(fetchAndAnalyzeLogs,5000);fetchAndAnalyzeLogs();</script></body></html>"""
-
-# --- START PYTHON CODE PART 2 (продолжение app.py) ---
-
 HTML_TEMPLATE_SCOREBOARD = """<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -412,15 +385,8 @@ const loadingIndicator = document.getElementById('loading-indicator');
 let isFetchingSb = false, errorCountSb = 0;
 const MAX_ERRORS_SB = 5;
 
-// ЗАГОЛОВКИ КОЛОНОК (кроме "Игрок") и их отображаемые имена
-// Ключи должны соответствовать ключам в display_fields (после nickname), которые приходят от сервера.
-// Имена полей в display_fields от сервера могут отличаться, адаптируйте ключи здесь.
 const STAT_HEADERS_CONFIG = {
-    // Пример: 'score': 'Очки', 'kills': 'K', 'deaths': 'D', 'assists': 'A', 'money': '$', 'team': 'Команда'
-    // Используйте те поля, которые вы определили в display_fields в process_json_scoreboard_data
-    // Предположим, сервер присылает: 'score', 'kills', 'deaths', 'assists', 'money', 'team'
-    // (и они есть в current_scoreboard_data['fields'] после 'nickname')
-    'team': 'Ком.', // Если team не первый после nickname, он будет здесь.
+    'team': 'Ком.', 
     'score': 'Очки',
     'kills': 'Уб.',
     'deaths': 'См.',
@@ -431,57 +397,41 @@ const STAT_HEADERS_CONFIG = {
     'kdr': 'KDR',
     'hsp': 'HS%',
     'mvp': 'MVP'
-    // Добавьте/измените по необходимости
 };
 
 
 function createTeamScoreboardElement(teamDisplayName, teamIdName, teamPlayers, fieldsFromServer) {
     const wrapper = document.createElement('div');
-    wrapper.className = 'team-scoreboard team-' + teamIdName.toLowerCase(); // e.g., team-ct
+    wrapper.className = 'team-scoreboard team-' + teamIdName.toLowerCase(); 
 
     const header = document.createElement('div');
     header.className = 'team-header team-' + teamIdName.toLowerCase() + '-header';
     
     const teamNameLogoDiv = document.createElement('div');
     teamNameLogoDiv.className = 'team-name-logo';
-    // const logo = document.createElement('img');
-    // logo.className = 'team-logo';
-    // logo.src = teamIdName.toLowerCase() === 'ct' ? 'placeholder_ct_logo.svg' : 'placeholder_t_logo.svg'; // Замените на реальные пути или SVG
-    // logo.alt = teamIdName + ' Logo';
-    // teamNameLogoDiv.appendChild(logo);
     const nameH2 = document.createElement('h2');
     nameH2.textContent = teamDisplayName;
     teamNameLogoDiv.appendChild(nameH2);
     header.appendChild(teamNameLogoDiv);
-
-    // Тут можно добавить общий счет команды, если он есть в данных
-    // const teamScore = document.createElement('div');
-    // teamScore.className = 'team-score-value';
-    // teamScore.textContent = teamPlayers.reduce((sum, p) => sum + (parseInt(p.score) || 0), 0); // Пример
-    // header.appendChild(teamScore);
     
     wrapper.appendChild(header);
 
     const playerListDiv = document.createElement('div');
     playerListDiv.className = 'player-list';
 
-    // Определяем, какие поля показывать и их порядок из fieldsFromServer
-    // Первый столбец - Игрок, остальные - по STAT_HEADERS_CONFIG, если они есть в fieldsFromServer
     const displayableFields = fieldsFromServer.filter(f => f.toLowerCase() !== 'nickname' && f.toLowerCase() !== 'accountid');
     
-    let gridColumns = "minmax(120px, 1.5fr) "; // Для имени игрока
+    let gridColumns = "minmax(120px, 1.5fr) "; 
     const statFieldsToDisplay = [];
 
     for (const fieldKey of displayableFields) {
         if (STAT_HEADERS_CONFIG[fieldKey.toLowerCase()]) {
-            gridColumns += "minmax(40px, 0.5fr) "; // Для каждой статистики
+            gridColumns += "minmax(40px, 0.5fr) "; 
             statFieldsToDisplay.push(fieldKey);
         } else if (fieldKey.toLowerCase() === 'team' && !STAT_HEADERS_CONFIG['team']){ 
-            // Если team есть, но не в конфиге, пропускаем или добавляем по-другому
         }
     }
     
-    // Заголовки списка игроков
     const listHeader = document.createElement('div');
     listHeader.className = 'player-list-header';
     listHeader.style.gridTemplateColumns = gridColumns.trim();
@@ -499,8 +449,7 @@ function createTeamScoreboardElement(teamDisplayName, teamIdName, teamPlayers, f
     });
     playerListDiv.appendChild(listHeader);
 
-    // Записи игроков
-    teamPlayers.slice(0, 10).forEach(player => { // Ограничение на 10 игроков для примера
+    teamPlayers.slice(0, 10).forEach(player => { 
         const entry = document.createElement('div');
         entry.className = 'player-entry';
         entry.style.gridTemplateColumns = gridColumns.trim();
@@ -513,7 +462,6 @@ function createTeamScoreboardElement(teamDisplayName, teamIdName, teamPlayers, f
         statFieldsToDisplay.forEach(fieldKey => {
             const statSpan = document.createElement('span');
             statSpan.className = 'player-stat stat-' + fieldKey.toLowerCase();
-            // Пытаемся найти поле без учета регистра в объекте player, если сервер присылает ключи в разном регистре
             let statValue = '-';
             for (const pKey in player) {
                 if (pKey.toLowerCase() === fieldKey.toLowerCase()) {
@@ -532,7 +480,7 @@ function createTeamScoreboardElement(teamDisplayName, teamIdName, teamPlayers, f
 }
 
 function buildScoreboardTables(data) {
-    teamsContainer.innerHTML = ''; // Очищаем предыдущие таблицы
+    teamsContainer.innerHTML = ''; 
     if (!data || !data.fields || data.fields.length === 0 || !data.players || data.players.length === 0) {
         placeholder.textContent = 'Нет данных об игроках или поля не определены.';
         placeholder.style.display = 'block';
@@ -540,9 +488,8 @@ function buildScoreboardTables(data) {
     }
     placeholder.style.display = 'none';
 
-    const teamCtId = '3'; // ID для CT (Counter-Terrorists)
-    const teamTId = '2';  // ID для T (Terrorists)
-    // Названия команд
+    const teamCtId = '3'; 
+    const teamTId = '2';  
     const teamCtName = 'Контр-Террористы';
     const teamTName = 'Террористы';
 
@@ -550,7 +497,6 @@ function buildScoreboardTables(data) {
 
     if (data.players && data.players.length > 0) {
         data.players.forEach(player => {
-            // Ищем поле команды регистронезависимо в объекте player
             let teamFieldValue = null;
             for (const key in player) {
                 if (key.toLowerCase() === 'team') {
@@ -575,7 +521,6 @@ function buildScoreboardTables(data) {
         displayedSomething = true;
     }
     
-    // Отображение "других" игроков, если они есть и ничего другого не отображено, или всегда если они есть
     if (otherPlayers.length > 0) {
          teamsContainer.appendChild(createTeamScoreboardElement('Наблюдатели / Другие', 'Other', otherPlayers, data.fields));
          displayedSomething = true;
@@ -583,7 +528,6 @@ function buildScoreboardTables(data) {
 
 
     if (!displayedSomething) {
-        // Если после всех попыток ничего не отображено, но игроки в data.players есть (например, без команд)
         if (data.players && data.players.length > 0) {
              teamsContainer.appendChild(createTeamScoreboardElement('Игроки (без команды)', 'Other', data.players, data.fields));
         } else {
@@ -624,6 +568,88 @@ fetchScoreboardDataSb(); // Initial fetch
 </body>
 </html>
 """
+
+# --- НОВЫЙ CSS ДЛЯ СТРАНИЦЫ "ТОЛЬКО ЧАТ" ---
+CHAT_PAGE_SPECIFIC_CSS = """<style>
+body { 
+    padding: 0; /* Убираем общий padding страницы */
+    display: flex; 
+    flex-direction: column; 
+    height: 100vh; /* Занимаем всю высоту вьюпорта */
+    margin: 0; /* Убедимся, что нет отступов у body */
+}
+.navigation { display: none !important; } /* Скрываем навигацию */
+h1 { display: none !important; } /* Скрываем основной заголовок H1 */
+
+.content-wrapper { 
+    /* Переопределяем стили для content-wrapper на этой странице */
+    padding: 10px; /* Небольшие отступы вокруг основного содержимого (чата) */
+    margin: 0; 
+    border: none; 
+    border-radius: 0; 
+    box-shadow: none; 
+    
+    flex-grow: 1; /* Занимает все доступное пространство по высоте */
+    display: flex; 
+    flex-direction: column;
+    overflow: hidden; /* Предотвращает выход контента за пределы */
+}
+
+#chat-container {
+    /* flex-grow, overflow-y, display:flex, flex-direction:column - уже есть во встроенных стилях шаблона ниже */
+    background-color: var(--surface-color); /* Фон для области чата */
+    border: 1px solid var(--border-color);   /* Рамка для области чата */
+    border-radius: 8px;                      /* Скругление углов области чата */
+    /* padding-right: 15px; - из встроенных стилей, можно оставить или уменьшить если нужно */
+}
+
+/* #chat-container-inner стили (margin-top:auto, padding-top) остаются из встроенных */
+
+.status-bar { 
+    flex-shrink: 0; /* Статус-бар не будет сжиматься */
+    height: 45px; /* Фиксированная высота для статус-бара */
+    padding: 10px 0; /* Переопределит padding из BASE_CSS */
+    background-color: var(--surface-color); /* Фон для статус-бара */
+    border-top: 1px solid var(--border-color); /* Верхняя граница для статус-бара */
+    /* text-align, font-size, color - наследуются или остаются из BASE_CSS */
+}
+</style>"""
+
+# --- НОВЫЙ HTML ШАБЛОН ДЛЯ СТРАНИЦЫ "ТОЛЬКО ЧАТ" ---
+HTML_TEMPLATE_CHAT_ONLY_NICKNAMES = """<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CS2 Chat - Только Никнеймы</title>
+<style>
+  /* Стили из HTML_TEMPLATE_MAIN для чата, они остаются актуальными */
+  #chat-container{flex-grow:1;overflow-y:auto;padding-right:15px;display:flex;flex-direction:column;}
+  #chat-container-inner{margin-top:auto;padding-top:15px; padding-left:10px; padding-right:5px;}
+  .message{margin-bottom:10px;padding:10px 15px;border-radius:8px;background-color:var(--player-entry-bg, #282828);border:1px solid var(--border-color);word-wrap:break-word;line-height:1.5;max-width:95%;align-self:flex-start; box-shadow: 0 1px 3px rgba(0,0,0,0.1);}
+  .message .timestamp{font-size:0.8em;color:var(--secondary-text-color);margin-right:8px;opacity:0.75;}
+  .message .sender{font-weight:500;margin-right:6px;color: var(--chat-sender-default-color);}
+  .message .sender.team-ct {color: var(--chat-team-ct-color);}
+  .message .sender.team-t {color: var(--chat-team-t-color);}
+  .message .text{color: var(--primary-text-color);}
+  .loading-placeholder{align-self:center;color:var(--secondary-text-color);margin-top:20px; font-size: 1em;}
+</style>
+</head><body>
+<div class="content-wrapper">
+    <div id="chat-container">
+        <div id="chat-container-inner">
+            <div class="message loading-placeholder">Загрузка сообщений...</div>
+        </div>
+    </div>
+</div>
+<div class="status-bar">
+    <span id="status-text">Ожидание данных...</span>
+    <span id="loading-indicator" style="display: none;" class="loader"></span>
+</div>
+<script>
+// JavaScript для обновления чата (такой же, как в HTML_TEMPLATE_MAIN)
+const chatContainerInner=document.getElementById('chat-container-inner');const chatContainer=document.getElementById('chat-container');const statusText=document.getElementById('status-text');const loadingIndicator=document.getElementById('loading-indicator');let isFetching=!1,errorCount=0;const MAX_ERRORS=5;
+async function fetchMessages(){if(isFetching||errorCount>=MAX_ERRORS)return;isFetching=!0;loadingIndicator.style.display='inline-block';try{const response=await fetch('/chat');if(!response.ok)throw new Error('Ошибка сети: '+response.status);const messages=await response.json();const isScrolledToBottom=chatContainer.scrollTop+chatContainer.clientHeight>=chatContainer.scrollHeight-30;chatContainerInner.innerHTML='';if(messages.length===0){chatContainerInner.innerHTML='<div class="message loading-placeholder">Сообщений пока нет.</div>'}else{messages.forEach(data=>{const messageElement=document.createElement('div');messageElement.className='message';const timeSpan=document.createElement('span');timeSpan.className='timestamp';timeSpan.textContent=`[${data.ts}]`;const senderSpan=document.createElement('span');senderSpan.className='sender';senderSpan.textContent=data.sender+':';if(data.team==='CT'){senderSpan.classList.add('team-ct');}else if(data.team==='T'){senderSpan.classList.add('team-t');}const textSpan=document.createElement('span');textSpan.className='text';textSpan.textContent=data.msg;messageElement.appendChild(timeSpan);messageElement.appendChild(senderSpan);messageElement.appendChild(textSpan);chatContainerInner.appendChild(messageElement)})}if(isScrolledToBottom){setTimeout(()=>{chatContainer.scrollTop=chatContainer.scrollHeight},0)}statusText.textContent='Обновлено: '+new Date().toLocaleTimeString();errorCount=0}catch(error){console.error('Ошибка:',error);statusText.textContent='Ошибка: '+error.message+'. #'+(errorCount+1);errorCount++;if(errorCount>=MAX_ERRORS){statusText.textContent+=' Автообновление остановлено.';clearInterval(intervalId)}}finally{isFetching=!1;loadingIndicator.style.display='none'}}
+const intervalId=setInterval(fetchMessages,3000);setTimeout(fetchMessages,500);
+</script>
+</body></html>"""
+
 
 # --- Python Code Part 3 (остальная часть app.py) ---
 @app.route('/submit_logs', methods=['POST'])
@@ -757,6 +783,12 @@ def messages_only_page(): return Response(BASE_CSS + NAV_HTML + HTML_TEMPLATE_MS
 def raw_log_viewer_page(): return Response(BASE_CSS + NAV_HTML + HTML_TEMPLATE_LOG_ANALYZER, mimetype='text/html')
 @app.route('/scoreboard_viewer', methods=['GET'])
 def scoreboard_viewer_page(): return Response(BASE_CSS + NAV_HTML + HTML_TEMPLATE_SCOREBOARD, mimetype='text/html')
+
+# --- НОВЫЙ МАРШРУТ ДЛЯ СТРАНИЦЫ "ТОЛЬКО ЧАТ" ---
+@app.route('/chat_only_nicknames', methods=['GET'])
+def chat_only_nicknames_page():
+    # NAV_HTML здесь не нужен, так как мы не хотим навигацию на этой странице
+    return Response(BASE_CSS + CHAT_PAGE_SPECIFIC_CSS + HTML_TEMPLATE_CHAT_ONLY_NICKNAMES, mimetype='text/html')
 
 # --- Run Application ---
 if __name__ == '__main__':
