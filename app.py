@@ -22,7 +22,7 @@ MAX_CHAT_MESSAGES = 100
 MAX_RAW_LOGS = 300
 chat_messages = deque(maxlen=MAX_CHAT_MESSAGES)
 raw_log_lines = deque(maxlen=MAX_RAW_LOGS)
-current_scoreboard_data = {"fields": [], "players": []}
+current_scoreboard_data = {"fields": [], "players": []} # Хранит актуальный scoreboard
 # -----------------------
 
 # --- Regex Definitions ---
@@ -67,7 +67,6 @@ SCOREBOARD_PLAYER_REGEX = re.compile(
     """,
     re.VERBOSE | re.IGNORECASE
 )
-
 PLAYER_INFO_REGEX = re.compile(
     r"""
     \"(?P<nickname>.+?)       # Захват никнейма (нежадный)
@@ -77,7 +76,7 @@ PLAYER_INFO_REGEX = re.compile(
     """,
     re.VERBOSE | re.IGNORECASE
 )
-player_nickname_map = {} # Глобальный словарь: accountid -> nickname
+player_nickname_map = {} 
 # ----------------------------------------------
 
 # --- Base CSS and Navigation HTML ---
@@ -164,8 +163,13 @@ def receive_and_parse_logs_handler():
 
     new_chat_messages_count = 0
     parsed_chat_batch = []
-    new_scoreboard_data_parsed_this_batch = False # Флаг для текущей пачки
-    temp_scoreboard_players_this_batch = [] # Игроки только из этой пачки
+    
+    # --- ИЗМЕНЕНО: Логика обработки scoreboard ---
+    # Эти переменные будут использоваться для сборки scoreboard из текущей пачки логов
+    current_batch_fields = None
+    current_batch_players = []
+    new_scoreboard_data_in_batch = False
+
 
     for line in log_lines:
         if not line: continue
@@ -184,105 +188,102 @@ def receive_and_parse_logs_handler():
             new_chat_messages_count += 1
             continue
 
-        # --- ИЗМЕНЕННЫЙ БЛОК ОБРАБОТКИ 'fields' ---
         fields_match = SCOREBOARD_FIELDS_REGEX.search(line)
         if fields_match:
             field_list_str = fields_match.group('field_list')
             new_fields_from_log = [f.strip() for f in field_list_str.split(',') if f.strip()]
 
-            final_fields_for_frontend = []
+            processed_fields = []
             if not any(f.lower() == 'nickname' for f in new_fields_from_log):
-                final_fields_for_frontend.append('nickname')
+                processed_fields.append('nickname')
             
             for f_log in new_fields_from_log:
-                if f_log.lower() not in [f_final.lower() for f_final in final_fields_for_frontend]:
-                    final_fields_for_frontend.append(f_log)
+                if f_log.lower() not in [f_final.lower() for f_final in processed_fields]:
+                    processed_fields.append(f_log)
             
-            # Убедимся, что 'accountid' присутствует, если он был в исходных полях лога,
-            # так как он используется для создания player_dict через zip.
-            # JavaScript скроет колонку 'accountid'.
-            if any(f.lower() == 'accountid' for f in new_fields_from_log) and \
-               not any(f.lower() == 'accountid' for f in final_fields_for_frontend):
-                # Находим индекс accountid в оригинальных полях и вставляем, если он там был
-                try:
-                    original_accountid_index = [f.lower() for f in new_fields_from_log].index('accountid')
-                    final_fields_for_frontend.insert(original_accountid_index + (1 if final_fields_for_frontend and final_fields_for_frontend[0].lower() == 'nickname' and 'nickname' not in [f.lower() for f in new_fields_from_log] else 0), new_fields_from_log[original_accountid_index])
-                except ValueError:
-                    pass # accountid не был в new_fields_from_log
+            # Убеждаемся, что 'accountid' присутствует, если он был в исходных полях лога
+            # Это нужно для корректного dict(zip(...)) и player_dict.get('accountid')
+            # JavaScript сам скроет колонку 'accountid'.
+            accountid_in_log = any(f.lower() == 'accountid' for f in new_fields_from_log)
+            accountid_in_processed = any(f.lower() == 'accountid' for f in processed_fields)
 
-            if final_fields_for_frontend:
-                if final_fields_for_frontend != current_scoreboard_data.get('fields'):
-                    current_scoreboard_data['fields'] = final_fields_for_frontend
-                    current_scoreboard_data['players'] = [] # Сбрасываем игроков при смене полей
-                    # temp_scoreboard_players_this_batch останется пустым, т.к. ждем player_X строк
-                    new_scoreboard_data_parsed_this_batch = True 
-                    app.logger.info(f"Scoreboard: Поля обновлены и установлены в: {current_scoreboard_data['fields']}")
+            if accountid_in_log and not accountid_in_processed:
+                try:
+                    # Пытаемся вставить 'accountid' примерно на его оригинальную позицию
+                    original_idx = [f.lower() for f in new_fields_from_log].index('accountid')
+                    original_accountid_field_name = new_fields_from_log[original_idx] # Сохраняем регистр
+                    
+                    insert_idx_offset = 0
+                    if processed_fields and processed_fields[0].lower() == 'nickname' and 'nickname' not in [f.lower() for f in new_fields_from_log]:
+                        insert_idx_offset = 1 # Если 'nickname' был добавлен в начало
+                    
+                    final_insert_idx = min(original_idx + insert_idx_offset, len(processed_fields))
+                    processed_fields.insert(final_insert_idx, original_accountid_field_name)
+
+                except ValueError: # На случай если 'accountid' не было в new_fields_from_log
+                    pass
+
+            if processed_fields:
+                current_batch_fields = processed_fields # Сохраняем поля для текущей пачки
+                current_batch_players = [] # Сбрасываем игроков для текущей пачки, т.к. пришли новые поля
+                new_scoreboard_data_in_batch = True
+                app.logger.info(f"Scoreboard: Обнаружены новые поля в пачке: {current_batch_fields}")
             else:
                  app.logger.warning(f"Scoreboard: Получена пустая строка полей: {line}")
             continue
-        # --- КОНЕЦ ИЗМЕНЕННОГО БЛОКА ---
 
         player_match = SCOREBOARD_PLAYER_REGEX.search(line)
-        if player_match and current_scoreboard_data.get('fields'):
+        # Игроков обрабатываем только если поля для текущей пачки (current_batch_fields) УЖЕ установлены
+        # ИЛИ если поля не менялись и мы добавляем к глобальному current_scoreboard_data
+        fields_to_use_for_player_zip = current_batch_fields if current_batch_fields is not None else current_scoreboard_data.get('fields')
+
+        if player_match and fields_to_use_for_player_zip:
             player_data_str = player_match.group('player_data')
             player_values = [v.strip() for v in player_data_str.split(',')]
 
-            # Важно: current_scoreboard_data['fields'] может содержать 'nickname',
-            # которого нет в player_values из лога. Zip будет работать по наименьшей длине.
-            # Поэтому мы должны использовать new_fields_from_log (или их аналог) для zip,
-            # а потом добавлять 'nickname'.
-            # ИЛИ, если 'nickname' уже в current_scoreboard_data['fields'], то player_values должны ему соответствовать.
-            # Проще всего: player_dict создается по current_scoreboard_data['fields'],
-            # но значения для 'nickname' берутся из player_nickname_map.
-
-            if len(player_values) == len(current_scoreboard_data['fields']):
-                 # Это условие может быть ложным, если мы добавили 'nickname' в fields,
-                 # а player_values его не содержит.
-                 # Правильнее было бы сопоставлять с `new_fields_from_log` при создании `player_dict`
-                 # а потом добавлять ник.
-                 # Однако, если `current_scoreboard_data['fields']` *всегда* включает `nickname` *и*
-                 # оригинальные поля (включая `accountid`), то `dict(zip(...))` отработает,
-                 # но для ключа `nickname` значением будет что-то из `player_values`, что неправильно.
-
-                 # Исправленный подход: создаем словарь на основе полей из лога, затем добавляем ник.
-                 # Для этого нам нужно сохранить `new_fields_from_log` из момента парсинга "fields".
-                 # Это усложняет. Давайте упростим:
-                 # player_dict будет содержать ключ 'nickname' из-за zip, но значение будет неверным.
-                 # Мы его перезапишем.
-
-                player_dict = dict(zip(current_scoreboard_data['fields'], player_values))
+            if len(player_values) == len(fields_to_use_for_player_zip):
+                player_dict = dict(zip(fields_to_use_for_player_zip, player_values))
                 
-                player_account_id = player_dict.get('accountid') # accountid должен быть в fields
+                player_account_id = player_dict.get('accountid')
                 if player_account_id:
                     nickname = player_nickname_map.get(player_account_id, f"ID:{player_account_id}")
-                    player_dict['nickname'] = nickname # Перезаписываем или добавляем
-                else:
-                    # Если accountid нет, то и ник не найти. Для поля 'nickname' ставим заглушку.
-                    if 'nickname' in player_dict: # Если nickname был в fields
-                         player_dict['nickname'] = 'Unknown Nick (no ID)'
-                    # Если nickname не было в fields, он и не добавится здесь.
-
-                temp_scoreboard_players_this_batch.append(player_dict)
-                new_scoreboard_data_parsed_this_batch = True
+                    player_dict['nickname'] = nickname
+                elif 'nickname' in player_dict: # Если 'nickname' был в fields, но нет accountid
+                     player_dict['nickname'] = 'Unknown (No ID)'
+                
+                current_batch_players.append(player_dict)
+                new_scoreboard_data_in_batch = True
             else:
                 app.logger.warning(
-                    f"Scoreboard: Несоответствие значений ({len(player_values)}) и полей "
-                    f"({len(current_scoreboard_data['fields'])} -> {current_scoreboard_data['fields']}). "
-                    f"Строка игрока: {player_data_str}. Строка лога: {line}"
+                    f"Scoreboard: Несоответствие значений ({len(player_values)}) и ожидаемых полей "
+                    f"({len(fields_to_use_for_player_zip)} -> {fields_to_use_for_player_zip}). "
+                    f"Данные игрока: {player_data_str}. Строка лога: {line}"
                 )
             continue
-
+    
+    # Обновление глобальных данных после обработки ВСЕЙ пачки
     if parsed_chat_batch:
         chat_messages.extend(parsed_chat_batch)
         if new_chat_messages_count > 0:
              app.logger.info(f"Log Parser: Добавлено {new_chat_messages_count} сообщений чата.")
 
-    if new_scoreboard_data_parsed_this_batch: # Если были новые поля ИЛИ новые игроки
-        # Если поля не менялись, но пришли новые игроки, current_scoreboard_data['players'] не был сброшен.
-        # Если поля менялись, current_scoreboard_data['players'] был сброшен.
-        # В любом случае, добавляем игроков из текущей пачки.
-        current_scoreboard_data['players'].extend(temp_scoreboard_players_this_batch)
-        app.logger.info(f"Scoreboard: Добавлено/обновлено {len(temp_scoreboard_players_this_batch)} игроков.")
+    if new_scoreboard_data_in_batch:
+        # Если в пачке были новые поля, то current_batch_fields и current_batch_players содержат ПОЛНЫЙ новый scoreboard
+        if current_batch_fields is not None: # Явный признак, что поля были в этой пачке
+            current_scoreboard_data['fields'] = current_batch_fields
+            current_scoreboard_data['players'] = current_batch_players # Заменяем полностью
+            app.logger.info(f"Scoreboard: Данные полностью обновлены. Поля: {len(current_scoreboard_data['fields'])}, Игроков: {len(current_scoreboard_data['players'])}")
+        # Случай, если current_batch_fields is None, но new_scoreboard_data_in_batch = True (только игроки без полей)
+        # Это означает, что мы должны были добавлять к существующим current_scoreboard_data['players'],
+        # но если `fields` не пришли, `current_scoreboard_data['players']` не должен был сбрасываться.
+        # Однако, если `fields` НЕ БЫЛО в пачке, то `current_batch_fields` будет `None`.
+        # Тогда `fields_to_use_for_player_zip` будет `current_scoreboard_data.get('fields')`.
+        # `current_batch_players` будет содержать игроков, добавленных с использованием старых полей.
+        # В этом случае, мы должны `extend`, а не присваивать.
+        elif current_batch_players: # Поля не менялись, но пришли новые игроки
+            current_scoreboard_data['players'].extend(current_batch_players)
+            app.logger.info(f"Scoreboard: Добавлены игроки ({len(current_batch_players)}) к существующим данным.")
+
 
     return jsonify({"status": "success", "message": f"Обработано {len(log_lines)} строк."}), 200
 
