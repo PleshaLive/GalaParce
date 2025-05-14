@@ -5,7 +5,7 @@ import re
 import datetime
 import html
 from collections import deque
-from flask import Flask, request, jsonify, Response, make_response # <--- ИЗМЕНЕНИЕ ЗДЕСЬ
+from flask import Flask, request, jsonify, Response, make_response # make_response все еще импортируется, хотя _build_cors_preflight_response удалена, может понадобиться для других целей
 from flask_cors import CORS
 import jwt # Библиотека для работы с JWT
 import base64 # Для декодирования секрета из Base64
@@ -14,14 +14,11 @@ import base64 # Для декодирования секрета из Base64
 app = Flask(__name__)
 
 # --- Logging Configuration ---
-# Уменьшаем количество логов от встроенного сервера Flask (werkzeug)
 logging.getLogger('werkzeug').setLevel(logging.WARNING)
-# Настраиваем формат и уровень логгирования для нашего приложения
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(levelname)s: %(message)s')
-logger = logging.getLogger(__name__) # Создаем экземпляр логгера
+logger = logging.getLogger(__name__)
 
 # --- Конфигурация Расширения ---
-# Получаем секрет расширения Twitch из переменной окружения.
 TWITCH_EXTENSION_SECRET_B64 = os.environ.get('TWITCH_EXTENSION_SECRET')
 EXTENSION_SECRET = None
 
@@ -38,21 +35,40 @@ else:
 TWITCH_EXTENSION_ID_ENV = os.environ.get('TWITCH_EXTENSION_ID')
 
 if not TWITCH_EXTENSION_ID_ENV:
-    logger.warning("Переменная окружения TWITCH_EXTENSION_ID не установлена! CORS будет разрешен для всех источников для /chat, что НЕ рекомендуется для продакшена.")
-    chat_origins = "*"
+    logger.warning("Переменная окружения TWITCH_EXTENSION_ID не установлена! CORS для /chat будет разрешен для '*', что НЕ рекомендуется. Установите TWITCH_EXTENSION_ID.")
+    # Если TWITCH_EXTENSION_ID не установлен, фронтенд расширения Twitch, скорее всего, не сможет подключиться из-за политики Origin.
+    # Установка "*" здесь - это запасной вариант, чтобы приложение не упало, но это не решение проблемы CORS для расширения.
+    chat_origins_config = "*"
 else:
-    chat_origins = [
+    chat_origins_config = [
         f"https://{TWITCH_EXTENSION_ID_ENV}.ext-twitch.tv",
         "https://supervisor.ext-twitch.tv"
+        # "http://localhost:8080" # Для локального Twitch Developer Rig, если он работает по HTTP
     ]
 
-submit_logs_origins = "*" # Для /submit_logs и /gsi оставляем пока так
+# Для /submit_logs и /gsi, если они вызываются с серверов игры, где Origin может быть любым,
+# или если используется другой механизм защиты (например, секретный ключ в заголовке).
+submit_logs_origins_config = "*"
 
 CORS(app, resources={
-    r"/chat": {"origins": chat_origins, "methods": ["GET", "OPTIONS"], "supports_credentials": True},
-    r"/submit_logs": {"origins": submit_logs_origins, "methods": ["POST", "OPTIONS"]},
-    r"/gsi": {"origins": submit_logs_origins, "methods": ["POST", "OPTIONS"]}
-}, supports_credentials=True)
+    r"/chat": {
+        "origins": chat_origins_config,
+        "methods": ["GET", "OPTIONS"], # Flask-CORS сам добавит OPTIONS, но можно оставить для ясности
+        "allow_headers": ["Authorization", "Content-Type"], # ВАЖНО: Разрешаем необходимые заголовки
+        "supports_credentials": True,
+        "max_age": 86400 # Опционально: время кеширования preflight ответа браузером
+    },
+    r"/submit_logs": {
+        "origins": submit_logs_origins_config,
+        "methods": ["POST", "OPTIONS"],
+        "allow_headers": ["Content-Type"] # Разрешаем Content-Type для JSON логов
+    },
+    r"/gsi": {
+        "origins": submit_logs_origins_config,
+        "methods": ["POST", "OPTIONS"],
+        "allow_headers": ["Content-Type"]
+    }
+}, supports_credentials=True) # supports_credentials=True важно для Twitch Extensions
 
 
 # --- Data Storage ---
@@ -62,21 +78,22 @@ display_chat_messages = deque(maxlen=MAX_CHAT_MESSAGES_DISPLAY)
 # --- Regex Definition for Chat ---
 CHAT_REGEX_SAY = re.compile(
     r"""
-    ^\s* (?:\d{2}\/\d{2}\/\d{4}\s+-\s+)?      
-    (?P<timestamp>\d{2}:\d{2}:\d{2}\.\d{3})  
-    \s+-\s+                                  
+    ^\s* # Начало строки, опциональные пробелы.
+    (?:\d{2}\/\d{2}\/\d{4}\s+-\s+)?      # Опциональная дата (ДД/ММ/ГГГГ - ).
+    (?P<timestamp>\d{2}:\d{2}:\d{2}\.\d{3})  # Временная метка (ЧЧ:ММ:СС.мс) - именованная группа 'timestamp'.
+    \s+-\s+                                  # Разделитель " - ".
     \"(?P<player_name>.+?)<(?P<userid>\d+)><(?P<steamid>\[U:\d:\d+\])><(?P<player_team>\w+)>\"
-    \s+                                      
-    (?P<chat_command>say|say_team)           
-    \s+                                      
-    \"(?P<message>.*)\"                      
-    \s*$                                     
+    \s+                                      # Пробел.
+    (?P<chat_command>say|say_team)           # Команда чата ('say' или 'say_team') - именованная группа 'chat_command'.
+    \s+                                      # Пробел.
+    \"(?P<message>.*)\"                      # Содержимое сообщения в кавычках - именованная группа 'message'.
+    \s*$                                     # Опциональные пробелы, конец строки.
     """,
     re.VERBOSE | re.IGNORECASE
 )
 # ----------------------------------------------
 
-# --- HTML (MINIMAL_CHAT_HTML_WITH_CSS остается как плейсхолдер, так как этот файл отвечает за бэкенд) ---
+# --- HTML (MINIMAL_CHAT_HTML_WITH_CSS остается как плейсхолдер) ---
 MINIMAL_CHAT_HTML_WITH_CSS = """<!DOCTYPE html><html lang="ru">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -91,13 +108,13 @@ MINIMAL_CHAT_HTML_WITH_CSS = """<!DOCTYPE html><html lang="ru">
         async function fetchSiteMessages() {
             try {
                 const response = await fetch('/chat');
-                if (response.status === 401) { 
+                if (response.status === 401) {
                         chatContainer.innerHTML = '<p>Ошибка: Доступ к этому чату с сайта ограничен. Используйте Twitch Extension.</p>';
                         return;
                 }
                 if (!response.ok) throw new Error('Network response was not ok.');
                 const messages = await response.json();
-                chatContainer.innerHTML = ''; 
+                chatContainer.innerHTML = '';
                 if (messages.length === 0) {
                     chatContainer.innerHTML = '<p>Сообщений пока нет.</p>';
                 } else {
@@ -127,6 +144,7 @@ MINIMAL_CHAT_HTML_WITH_CSS = """<!DOCTYPE html><html lang="ru">
 
 # --- Декоратор для проверки JWT ---
 def token_required(f):
+    # functools.wraps(f) можно добавить для сохранения метаданных, если нужно
     def decorated(*args, **kwargs):
         if not EXTENSION_SECRET:
             logger.error("EXTENSION_SECRET не настроен на сервере. Аутентификация невозможна.")
@@ -147,6 +165,7 @@ def token_required(f):
 
         try:
             payload = jwt.decode(token, EXTENSION_SECRET, algorithms=["HS256"])
+            # logger.info(f"JWT валиден. Роль: {payload.get('role')}, UserID: {payload.get('user_id')}, ChannelID: {payload.get('channel_id')}")
         except jwt.ExpiredSignatureError:
             logger.warning("Получен просроченный JWT (ExpiredSignatureError).")
             return jsonify({"error": "Срок действия токена истек"}), 401
@@ -156,16 +175,14 @@ def token_required(f):
         
         return f(*args, **kwargs)
     
-    decorated.__name__ = f.__name__
+    decorated.__name__ = f.__name__ # Сохраняем имя для Flask
     return decorated
 
 # --- Log Submission Handler ---
-@app.route('/submit_logs', methods=['POST', 'OPTIONS'])
-@app.route('/gsi', methods=['POST', 'OPTIONS'])
+@app.route('/submit_logs', methods=['POST']) # Убран 'OPTIONS', Flask-CORS обработает
+@app.route('/gsi', methods=['POST'])       # Убран 'OPTIONS', Flask-CORS обработает
 def receive_and_parse_logs_handler():
-    if request.method == 'OPTIONS':
-        return _build_cors_preflight_response()
-
+    # Ручная обработка 'OPTIONS' удалена
     global display_chat_messages
     log_lines = []
     
@@ -216,7 +233,7 @@ def receive_and_parse_logs_handler():
             if chat_command_type == "say":
                 timestamp_str = extracted_data.get('timestamp', datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3])
                 player_team_raw = extracted_data['player_team']
-                if not message_text_raw: continue
+                if not message_text_raw: continue # Пропускаем пустые сообщения.
 
                 team_identifier = "Other"
                 if player_team_raw.upper() == "CT": team_identifier = "CT"
@@ -238,11 +255,10 @@ def receive_and_parse_logs_handler():
 # -----------------------------
 
 # --- API Endpoint for Chat Data ---
-@app.route('/chat', methods=['GET', 'OPTIONS'])
+@app.route('/chat', methods=['GET']) # Убран 'OPTIONS', Flask-CORS обработает
 @token_required
 def get_structured_chat_data():
-    if request.method == 'OPTIONS':
-        return _build_cors_preflight_response()
+    # Ручная обработка 'OPTIONS' удалена
     return jsonify(list(display_chat_messages))
 # -----------------------------
 
@@ -252,18 +268,9 @@ def index():
     return Response(MINIMAL_CHAT_HTML_WITH_CSS, mimetype='text/html')
 # -----------------------------
 
-# --- CORS Preflight response builder ---
-def _build_cors_preflight_response():
-    response = make_response() # Теперь make_response определен
-    # Flask-CORS сам управляет этими заголовками на основе конфигурации для ресурса
-    # response.headers.add("Access-Control-Allow-Origin", "*") 
-    # response.headers.add('Access-Control-Allow-Headers', "*")
-    # response.headers.add('Access-Control-Allow-Methods', "*")
-    return response
-
 # --- Run Application ---
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
-    # Установите ENV_TYPE=production в переменных окружения на Railway для отключения debug режима
+    # Для продакшена debug=False. Можно управлять через переменную окружения ENV_TYPE=production
     app.run(host='0.0.0.0', port=port, debug=False if os.environ.get('ENV_TYPE') == 'production' else True)
 # -----------------------------
