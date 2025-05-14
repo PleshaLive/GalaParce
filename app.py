@@ -5,7 +5,7 @@ import re
 import datetime
 import html
 from collections import deque
-from flask import Flask, request, jsonify, Response, make_response # make_response все еще импортируется, хотя _build_cors_preflight_response удалена, может понадобиться для других целей
+from flask import Flask, request, jsonify, Response, make_response # make_response может понадобиться для других целей
 from flask_cors import CORS
 import jwt # Библиотека для работы с JWT
 import base64 # Для декодирования секрета из Base64
@@ -14,7 +14,7 @@ import base64 # Для декодирования секрета из Base64
 app = Flask(__name__)
 
 # --- Logging Configuration ---
-logging.getLogger('werkzeug').setLevel(logging.WARNING)
+logging.getLogger('werkzeug').setLevel(logging.WARNING) # Уменьшаем логи werkzeug
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(name)s %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -36,39 +36,35 @@ TWITCH_EXTENSION_ID_ENV = os.environ.get('TWITCH_EXTENSION_ID')
 
 if not TWITCH_EXTENSION_ID_ENV:
     logger.warning("Переменная окружения TWITCH_EXTENSION_ID не установлена! CORS для /chat будет разрешен для '*', что НЕ рекомендуется. Установите TWITCH_EXTENSION_ID.")
-    # Если TWITCH_EXTENSION_ID не установлен, фронтенд расширения Twitch, скорее всего, не сможет подключиться из-за политики Origin.
-    # Установка "*" здесь - это запасной вариант, чтобы приложение не упало, но это не решение проблемы CORS для расширения.
     chat_origins_config = "*"
 else:
     chat_origins_config = [
         f"https://{TWITCH_EXTENSION_ID_ENV}.ext-twitch.tv",
         "https://supervisor.ext-twitch.tv"
-        # "http://localhost:8080" # Для локального Twitch Developer Rig, если он работает по HTTP
+        # "http://localhost:8080" # Для локального Twitch Developer Rig
     ]
 
-# Для /submit_logs и /gsi, если они вызываются с серверов игры, где Origin может быть любым,
-# или если используется другой механизм защиты (например, секретный ключ в заголовке).
-submit_logs_origins_config = "*"
+submit_logs_origins_config = "*" # Для логов с игрового сервера
 
 CORS(app, resources={
     r"/chat": {
         "origins": chat_origins_config,
-        "methods": ["GET", "OPTIONS"], # Flask-CORS сам добавит OPTIONS, но можно оставить для ясности
-        "allow_headers": ["Authorization", "Content-Type"], # ВАЖНО: Разрешаем необходимые заголовки
+        "methods": ["GET", "OPTIONS"],
+        "allow_headers": ["Authorization", "Content-Type"], # ВАЖНО: Разрешаем Authorization
         "supports_credentials": True,
-        "max_age": 86400 # Опционально: время кеширования preflight ответа браузером
+        "max_age": 86400
     },
     r"/submit_logs": {
         "origins": submit_logs_origins_config,
         "methods": ["POST", "OPTIONS"],
-        "allow_headers": ["Content-Type"] # Разрешаем Content-Type для JSON логов
+        "allow_headers": ["Content-Type"]
     },
     r"/gsi": {
         "origins": submit_logs_origins_config,
         "methods": ["POST", "OPTIONS"],
         "allow_headers": ["Content-Type"]
     }
-}, supports_credentials=True) # supports_credentials=True важно для Twitch Extensions
+}, supports_credentials=True)
 
 
 # --- Data Storage ---
@@ -80,20 +76,19 @@ CHAT_REGEX_SAY = re.compile(
     r"""
     ^\s* # Начало строки, опциональные пробелы.
     (?:\d{2}\/\d{2}\/\d{4}\s+-\s+)?      # Опциональная дата (ДД/ММ/ГГГГ - ).
-    (?P<timestamp>\d{2}:\d{2}:\d{2}\.\d{3})  # Временная метка (ЧЧ:ММ:СС.мс) - именованная группа 'timestamp'.
+    (?P<timestamp>\d{2}:\d{2}:\d{2}\.\d{3})  # Временная метка (ЧЧ:ММ:СС.мс)
     \s+-\s+                                  # Разделитель " - ".
     \"(?P<player_name>.+?)<(?P<userid>\d+)><(?P<steamid>\[U:\d:\d+\])><(?P<player_team>\w+)>\"
     \s+                                      # Пробел.
-    (?P<chat_command>say|say_team)           # Команда чата ('say' или 'say_team') - именованная группа 'chat_command'.
+    (?P<chat_command>say|say_team)           # Команда чата ('say' или 'say_team')
     \s+                                      # Пробел.
-    \"(?P<message>.*)\"                      # Содержимое сообщения в кавычках - именованная группа 'message'.
+    \"(?P<message>.*)\"                      # Содержимое сообщения в кавычках
     \s*$                                     # Опциональные пробелы, конец строки.
     """,
     re.VERBOSE | re.IGNORECASE
 )
-# ----------------------------------------------
 
-# --- HTML (MINIMAL_CHAT_HTML_WITH_CSS остается как плейсхолдер) ---
+# --- HTML (Placeholder for root URL) ---
 MINIMAL_CHAT_HTML_WITH_CSS = """<!DOCTYPE html><html lang="ru">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -107,12 +102,12 @@ MINIMAL_CHAT_HTML_WITH_CSS = """<!DOCTYPE html><html lang="ru">
         const chatContainer = document.getElementById('chat-container');
         async function fetchSiteMessages() {
             try {
-                const response = await fetch('/chat');
-                if (response.status === 401) {
+                const response = await fetch('/chat'); // Этот сайт не будет отправлять JWT
+                if (response.status === 401) { // Если /chat требует JWT
                         chatContainer.innerHTML = '<p>Ошибка: Доступ к этому чату с сайта ограничен. Используйте Twitch Extension.</p>';
                         return;
                 }
-                if (!response.ok) throw new Error('Network response was not ok.');
+                if (!response.ok) throw new Error('Network response was not ok: ' + response.statusText);
                 const messages = await response.json();
                 chatContainer.innerHTML = '';
                 if (messages.length === 0) {
@@ -137,50 +132,72 @@ MINIMAL_CHAT_HTML_WITH_CSS = """<!DOCTYPE html><html lang="ru">
                 chatContainer.innerHTML = '<p>Не удалось загрузить сообщения.</p>';
             }
         }
-        chatContainer.innerHTML = '<p>Для просмотра чата используйте Twitch Extension. Этот сайт-просмотрщик может быть неактивен из-за настроек безопасности (требуется JWT для /chat).</p>';
+        // fetchSiteMessages(); // Раскомментируйте для загрузки на сайте, если /chat не требует JWT или вы обрабатываете это
+        chatContainer.innerHTML = '<p>Для просмотра чата используйте Twitch Extension. Этот сайт-просмотрщик может быть неактивен из-за настроек безопасности.</p>';
     </script>
 </body></html>"""
 
 
-# --- Декоратор для проверки JWT ---
+# --- Декоратор для проверки JWT (УЛУЧШЕННЫЙ) ---
 def token_required(f):
-    # functools.wraps(f) можно добавить для сохранения метаданных, если нужно
+    # import functools # Если будете использовать @functools.wraps(f)
+    # @functools.wraps(f) # Для сохранения метаданных оригинальной функции
     def decorated(*args, **kwargs):
+        # Логируем все входящие заголовки для отладки
+        logger.info(f"Входящие заголовки в token_required: {list(request.headers.items())}")
+
         if not EXTENSION_SECRET:
             logger.error("EXTENSION_SECRET не настроен на сервере. Аутентификация невозможна.")
-            return jsonify({"error": "Сервер не настроен для аутентификации расширения (отсутствует секрет)"}), 500
+            return jsonify({"error": "Сервер не настроен для аутентификации расширения (отсутствует секрет)"}), 500 # Это действительно серверная проблема
 
         token = None
-        if 'Authorization' in request.headers:
-            auth_header = request.headers['Authorization']
-            try:
-                token = auth_header.split(" ")[1]
-            except IndexError:
-                logger.warning("Некорректный формат заголовка Authorization. Отсутствует Bearer токен.")
+        # Безопасно получаем заголовок Authorization
+        auth_header_value = request.headers.get('Authorization')
+
+        if auth_header_value:
+            logger.info(f"Найден заголовок Authorization: '{auth_header_value}'")
+            parts = auth_header_value.split(" ")
+            # Проверяем, что формат "Bearer <token>"
+            if len(parts) == 2 and parts[0].lower() == "bearer":
+                token = parts[1]
+                logger.info(f"Извлечен токен (первые 15 символов): {token[:15]}...")
+            else:
+                logger.warning(f"Некорректный формат заголовка Authorization: '{auth_header_value}'. Ожидался 'Bearer <token>'.")
+                # Возвращаем 401, так как это ошибка клиента (неправильный заголовок)
                 return jsonify({"error": "Некорректный формат заголовка Authorization"}), 401
-        
+        else:
+            logger.warning("Заголовок 'Authorization' отсутствует в запросе.")
+            # Возвращаем 401, так как это ошибка клиента (отсутствие авторизации)
+            return jsonify({"error": "(Я не могу найти ваш токен авторизации в заголовках)"}), 401
+
+        # Если после всех проверок токен все еще None (хотя логика выше должна это покрыть)
         if not token:
-            logger.warning("Токен авторизации отсутствует в запросе.")
-            return jsonify({"error": "Токен авторизации отсутствует"}), 401
+            logger.error("Критическая ошибка: Токен не был извлечен, хотя заголовок мог присутствовать. Проверьте логику.")
+            return jsonify({"error": "(Токен не был извлечен после проверок)"}), 401 # Все равно 401
 
         try:
+            # Верификация и декодирование JWT
             payload = jwt.decode(token, EXTENSION_SECRET, algorithms=["HS256"])
-            # logger.info(f"JWT валиден. Роль: {payload.get('role')}, UserID: {payload.get('user_id')}, ChannelID: {payload.get('channel_id')}")
+            logger.info(f"JWT валиден. Payload: {payload}") # Логируем payload для информации
+            # Можно добавить дополнительные проверки payload здесь (например, 'role', 'user_id')
         except jwt.ExpiredSignatureError:
             logger.warning("Получен просроченный JWT (ExpiredSignatureError).")
             return jsonify({"error": "Срок действия токена истек"}), 401
         except jwt.InvalidTokenError as e:
             logger.warning(f"Получен невалидный JWT: {e}")
             return jsonify({"error": "Невалидный токен авторизации"}), 401
-        
-        return f(*args, **kwargs)
+        except Exception as e: # Ловим другие возможные ошибки при декодировании
+            logger.error(f"Непредвиденная ошибка при декодировании JWT: {e}")
+            return jsonify({"error": "Ошибка при обработке токена"}), 500 # Это может быть серверной проблемой
+
+        return f(*args, **kwargs) # Передаем управление оригинальной функции
     
     decorated.__name__ = f.__name__ # Сохраняем имя для Flask
     return decorated
 
 # --- Log Submission Handler ---
-@app.route('/submit_logs', methods=['POST']) # Убран 'OPTIONS', Flask-CORS обработает
-@app.route('/gsi', methods=['POST'])       # Убран 'OPTIONS', Flask-CORS обработает
+@app.route('/submit_logs', methods=['POST']) # Flask-CORS обработает OPTIONS
+@app.route('/gsi', methods=['POST'])       # Flask-CORS обработает OPTIONS
 def receive_and_parse_logs_handler():
     # Ручная обработка 'OPTIONS' удалена
     global display_chat_messages
@@ -190,10 +207,11 @@ def receive_and_parse_logs_handler():
         data = request.get_json()
         if isinstance(data, dict) and 'lines' in data and isinstance(data.get('lines'), list):
             log_lines = data.get('lines', [])
-        elif isinstance(data, list):
+        elif isinstance(data, list): # Если пришел просто массив JSON строк
             log_lines = data
         else:
             logger.warning("Получен JSON, но ключ 'lines' отсутствует, не список, или формат неизвестен.")
+            # Попытка прочитать как текст, если JSON не распознан как ожидалось
             raw_data_fallback = request.get_data(as_text=True)
             if raw_data_fallback: log_lines = raw_data_fallback.splitlines()
     else:
@@ -204,9 +222,8 @@ def receive_and_parse_logs_handler():
         return jsonify({"status": "error", "message": "Строки не предоставлены или не удалось их извлечь"}), 400
     
     new_messages_added_count = 0
-
     for line_content in log_lines:
-        if not line_content.strip(): continue
+        if not line_content.strip(): continue # Пропускаем пустые строки
             
         chat_match = CHAT_REGEX_SAY.search(line_content)
         if chat_match:
@@ -215,34 +232,36 @@ def receive_and_parse_logs_handler():
             sender_name_raw = extracted_data['player_name'].strip()
             message_text_raw = extracted_data['message'].strip()
             
+            # Обработка команды !team1
             if message_text_raw.lower().startswith("!team1"):
                 command_param_part = message_text_raw[len("!team1"):].strip()
                 logger.info(f"Пользователь '{sender_name_raw}' выполнил команду !team1 (параметр: '{command_param_part}'). Очистка чата.")
                 display_chat_messages.clear()
-                
                 system_message = {
                     "ts": datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3],
                     "sender": "СИСТЕМА",
                     "msg": f"Чат очищен по команде от {html.escape(sender_name_raw)}. Инфо: {html.escape(command_param_part)}",
-                    "team": "Other"
+                    "team": "Other" # Системные сообщения можно отнести к "Other"
                 }
                 display_chat_messages.append(system_message)
                 new_messages_added_count +=1
-                continue
+                continue # Переходим к следующей строке лога
 
+            # Обрабатываем только 'say' сообщения для отображения (если это не была команда)
             if chat_command_type == "say":
                 timestamp_str = extracted_data.get('timestamp', datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3])
                 player_team_raw = extracted_data['player_team']
-                if not message_text_raw: continue # Пропускаем пустые сообщения.
+                
+                if not message_text_raw: continue # Пропускаем пустые сообщения "say"
 
-                team_identifier = "Other"
+                team_identifier = "Other" # Команда по умолчанию
                 if player_team_raw.upper() == "CT": team_identifier = "CT"
                 elif player_team_raw.upper() == "TERRORIST" or player_team_raw.upper() == "T": team_identifier = "T"
                 
                 message_obj_for_display = {
                     "ts": timestamp_str,
-                    "sender": html.escape(sender_name_raw),
-                    "msg": html.escape(message_text_raw),
+                    "sender": html.escape(sender_name_raw), # Экранируем HTML для безопасности
+                    "msg": html.escape(message_text_raw),    # Экранируем HTML для безопасности
                     "team": team_identifier
                 }
                 display_chat_messages.append(message_obj_for_display)
@@ -252,25 +271,23 @@ def receive_and_parse_logs_handler():
         logger.info(f"Добавлено {new_messages_added_count} сообщений для чата (включая системные, если были).")
             
     return jsonify({"status": "success", "message": f"Обработано {len(log_lines)} строк."}), 200
-# -----------------------------
 
 # --- API Endpoint for Chat Data ---
-@app.route('/chat', methods=['GET']) # Убран 'OPTIONS', Flask-CORS обработает
+@app.route('/chat', methods=['GET']) # Flask-CORS обработает OPTIONS
 @token_required
 def get_structured_chat_data():
     # Ручная обработка 'OPTIONS' удалена
     return jsonify(list(display_chat_messages))
-# -----------------------------
 
 # --- Main HTML Page Route ---
 @app.route('/', methods=['GET'])
 def index():
     return Response(MINIMAL_CHAT_HTML_WITH_CSS, mimetype='text/html')
-# -----------------------------
 
 # --- Run Application ---
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     # Для продакшена debug=False. Можно управлять через переменную окружения ENV_TYPE=production
-    app.run(host='0.0.0.0', port=port, debug=False if os.environ.get('ENV_TYPE') == 'production' else True)
-# -----------------------------
+    # Пример: ENV_TYPE=development для включения debug=True
+    is_production = os.environ.get('ENV_TYPE', 'production').lower() == 'production'
+    app.run(host='0.0.0.0', port=port, debug=not is_production)
