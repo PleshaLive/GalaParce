@@ -7,17 +7,17 @@ import html
 from collections import deque
 import functools # Для functools.wraps
 
-from flask import Flask, request, jsonify, Response, make_response # make_response может понадобиться для других целей
+from flask import Flask, request, jsonify, Response, make_response
 from flask_cors import CORS
-import jwt # Библиотека для работы с JWT
-import base64 # Для декодирования секрета из Base64
+import jwt
+import base64
 
 # --- Flask App Setup ---
 app = Flask(__name__)
 
 # --- Logging Configuration ---
-logging.getLogger('werkzeug').setLevel(logging.WARNING) # Уменьшаем логи werkzeug
-logging.basicConfig(level=logging.DEBUG, # Устанавливаем уровень DEBUG для более подробных логов
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
+logging.basicConfig(level=logging.DEBUG, # Уровень DEBUG для подробных логов
                     format='%(asctime)s %(name)s %(levelname)s %(module)s %(funcName)s L%(lineno)d: %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,6 @@ else:
         logger.info("Секрет расширения Twitch успешно загружен и декодирован.")
     except Exception as e:
         logger.critical(f"Ошибка декодирования TWITCH_EXTENSION_SECRET из Base64: {e}", exc_info=True)
-        # В этом случае приложение не сможет аутентифицировать токены.
 
 # --- CORS Configuration for Production ---
 TWITCH_EXTENSION_ID_ENV = os.environ.get('TWITCH_EXTENSION_ID')
@@ -48,44 +47,37 @@ if not TWITCH_EXTENSION_ID_ENV:
 else:
     chat_origins_config = [
         f"https://{TWITCH_EXTENSION_ID_ENV}.ext-twitch.tv",
-        "https://supervisor.ext-twitch.tv" # Для Twitch Developer Rig
+        "https://supervisor.ext-twitch.tv"
     ]
 
-# Для /gsi (и /submit_logs, если он остался как алиас)
-# Если вы используете ТОЛЬКО /gsi для приема данных, то и конфигурация для /submit_logs не нужна.
-# Этот эндпоинт принимает данные от игры (GSI), поэтому origin может быть не так важен,
-# как для /chat, который вызывается из Twitch Extension.
-# Рассмотрите добавление других механизмов защиты для /gsi, если это необходимо.
-gsi_origins_config = "*"
+gsi_origins_config = "*" # Для логов с игрового сервера
 
 CORS(app, resources={
     r"/chat": {
         "origins": chat_origins_config,
         "methods": ["GET", "OPTIONS"],
-        "allow_headers": ["Authorization", "Content-Type"], # ВАЖНО
+        "allow_headers": ["Authorization", "Content-Type"],
         "supports_credentials": True,
         "max_age": 86400
     },
-    r"/gsi": { # Единый эндпоинт для приема данных от игры
+    r"/gsi": { # Единый эндпоинт для приема данных от игры (текстовых логов CS2)
+        "origins": gsi_origins_config,
+        "methods": ["POST", "OPTIONS"],
+        "allow_headers": ["Content-Type"] # text/plain или application/json, если строки чата завернуты в JSON
+    },
+    r"/submit_logs": { # Алиас для /gsi, если он еще где-то используется
         "origins": gsi_origins_config,
         "methods": ["POST", "OPTIONS"],
         "allow_headers": ["Content-Type"]
     }
-    # Если /submit_logs больше не используется или является синонимом /gsi, его можно убрать отсюда,
-    # либо оставить, если он все еще нужен как отдельный маршрут с теми же правилами, что и /gsi.
-    # r"/submit_logs": {
-    #     "origins": gsi_origins_config, # или submit_logs_origins_config
-    #     "methods": ["POST", "OPTIONS"],
-    #     "allow_headers": ["Content-Type"]
-    # }
 }, supports_credentials=True)
 
 
 # --- Data Storage ---
-MAX_CHAT_MESSAGES_DISPLAY = 100 # Максимальное количество сообщений для отображения
+MAX_CHAT_MESSAGES_DISPLAY = 100
 display_chat_messages = deque(maxlen=MAX_CHAT_MESSAGES_DISPLAY)
 
-# --- Regex Definition for Chat (если вы все еще пытаетесь парсить чат из GSI или другого источника) ---
+# --- Regex Definition for Chat ---
 CHAT_REGEX_SAY = re.compile(
     r"""
     ^\s* # Начало строки, опциональные пробелы.
@@ -151,92 +143,97 @@ def token_required(f):
         return f(*args, **kwargs)
     return decorated
 
-# --- GSI Data Handler (бывший Log Submission Handler) ---
-# Маршрут /submit_logs оставлен как алиас для /gsi для обратной совместимости, если он где-то использовался.
-# Если вы точно используете только /gsi, алиас можно убрать.
+# --- GSI / Log Data Handler (для текстовых логов CS2) ---
 @app.route('/gsi', methods=['POST'])
-@app.route('/submit_logs', methods=['POST']) # Алиас, если нужен
-def gsi_data_handler(): # Переименована для ясности, что это для GSI
+@app.route('/submit_logs', methods=['POST']) # Алиас, если используется
+def gsi_data_handler():
     global display_chat_messages
+    log_lines = []
     
     content_type = request.headers.get('Content-Type', '').lower()
-    logger.info(f"Запрос к /gsi. Content-Type: {content_type}")
+    logger.info(f"Запрос к /gsi. Content-Type: '{content_type}'")
 
-    # Если вы ожидаете ТОЛЬКО GSI (который обычно JSON), то эта логика упрощается.
-    # Ваш предыдущий лог показывал, что GSI приходит как JSON, но ваш код пытался его парсить как массив строк.
-    if 'application/json' not in content_type:
-        logger.warning(f"/gsi: получен не JSON Content-Type: {content_type}. Попытка обработать как текст.")
-        # Если это не JSON, возможно, это просто строки чата, отправленные как текст.
-        # Но вы сказали, что используете только /gsi для GSI.
-        # Для GSI здесь должна быть ошибка, если это не JSON.
-        # return jsonify({"status": "error", "message": "Ожидается Content-Type application/json для GSI"}), 415
-
-    gsi_payload = None
     try:
-        gsi_payload = request.get_json()
-        if not gsi_payload: # Если пришел пустой JSON {} или null
-            logger.warning("/gsi: получен пустой JSON объект от request.get_json().")
-            # Попробуем прочитать тело запроса как текст на случай, если это не JSON или пустой JSON
-            raw_data_text = request.get_data(as_text=True)
-            if raw_data_text:
-                logger.info(f"/gsi: Тело запроса, прочитанное как текст: {raw_data_text[:200]}...")
-                # Здесь вы можете решить, что делать с этим текстом.
-                # Для GSI это не ожидается. Для логов чата - можно было бы разбить на строки.
-            return jsonify({"status": "error", "message": "Получен пустой или некорректный JSON"}), 400
-    except Exception as e:
-        logger.error(f"Ошибка при парсинге JSON в /gsi: {e}", exc_info=True)
-        # Попробуем прочитать тело запроса как текст, если парсинг JSON не удался
+        # Логи CS2 обычно приходят как text/plain, построчно
         raw_data_text = request.get_data(as_text=True)
         if raw_data_text:
-            logger.info(f"/gsi: Тело запроса (при ошибке JSON), прочитанное как текст: {raw_data_text[:200]}...")
-        return jsonify({"status": "error", "message": "Ошибка парсинга JSON"}), 400
+            log_lines = raw_data_text.splitlines()
+            logger.info(f"/gsi: Тело запроса успешно прочитано как текст, получено {len(log_lines)} строк.")
+            if len(log_lines) > 0:
+                 logger.debug(f"/gsi: Первая полученная строка: {log_lines[0][:200]}...")
+        else:
+            logger.warning("/gsi: Тело запроса пустое при чтении как текст.")
+            # Если запрос пустой, но корректный, можно вернуть 200, а не 400
+            return jsonify({"status": "success", "message": "Получен пустой запрос."}), 200
+    except Exception as e:
+        logger.error(f"Ошибка при чтении тела запроса как текст в /gsi: {e}", exc_info=True)
+        return jsonify({"status": "error", "message": "Ошибка при чтении тела запроса"}), 400
 
-    logger.info(f"Успешно получены и распарсены GSI данные (начало): {str(gsi_payload)[:500]}...")
+    if not log_lines:
+        logger.info("/gsi: Нет строк для обработки после чтения тела запроса.")
+        return jsonify({"status": "success", "message": "Нет строк для обработки."}), 200
+
     new_messages_added_count = 0
-
-    # --- Логика обработки GSI данных для извлечения "сообщений" ---
-    # ПРЕДУПРЕЖДЕНИЕ: Стандартный GSI CS2/CS:GO НЕ СОДЕРЖИТ СООБЩЕНИЙ ИГРОВОГО ЧАТА.
-    # Этот блок должен быть адаптирован под то, какие именно "события" вы хотите извлекать из GSI
-    # и представлять в виде сообщений.
-    #
-    # Пример: если бы мы хотели логировать фазу игры как системное сообщение
-    # (это очень упрощенно и будет генерировать много сообщений без доп. логики)
-    if isinstance(gsi_payload, dict) and 'map' in gsi_payload and isinstance(gsi_payload['map'], dict) and 'phase' in gsi_payload['map']:
-        current_phase = gsi_payload['map']['phase']
-        # Чтобы избежать дублирования, нужна логика отслеживания предыдущего состояния
-        # Например, можно хранить последнее отправленное системное сообщение о фазе
-        # и отправлять новое, только если фаза изменилась и прошло какое-то время.
-        # Для простоты примера, мы можем просто добавить это как есть, но это не идеально.
-        
-        # Простой пример:
-        # system_message_text = f"Текущая фаза игры: {current_phase}"
-        # system_message_obj = {
-        #     "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S.%f")[:-3],
-        #     "sender": "СИСТЕМА GSI",
-        #     "msg": html.escape(system_message_text),
-        #     "team": "Other"
-        # }
-        # display_chat_messages.append(system_message_obj)
-        # new_messages_added_count += 1
-        # logger.info(f"Добавлено системное сообщение из GSI: {system_message_text}")
-        pass # Удалите pass и реализуйте вашу логику извлечения сообщений из GSI
-
-    # Если вы все еще хотите пытаться применить CHAT_REGEX_SAY к каким-то текстовым полям из GSI,
-    # вам нужно будет найти эти поля в gsi_payload и передать их в CHAT_REGEX_SAY.
-    # Например, если бы GSI содержал поле 'all_chat_lines' в виде списка строк (чего он не делает):
-    # if isinstance(gsi_payload, dict) and 'all_chat_lines' in gsi_payload and isinstance(gsi_payload['all_chat_lines'], list):
-    #     for line_content in gsi_payload['all_chat_lines']:
-    #         if not isinstance(line_content, str): continue
-    #         # ... (далее ваша логика с CHAT_REGEX_SAY, как была раньше) ...
-    #         pass
-
-
-    if new_messages_added_count > 0:
-        logger.info(f"Добавлено {new_messages_added_count} 'сообщений' из GSI. Всего в очереди: {len(display_chat_messages)}.")
-    else:
-        logger.info("Новых 'сообщений' для чата не извлечено или не сформировано из этих GSI данных.")
+    for i, line_content in enumerate(log_lines):
+        if not isinstance(line_content, str): # Дополнительная проверка типа
+            logger.warning(f"Элемент {i+1} в log_lines не является строкой, пропускается: {type(line_content)}")
+            continue
+        if not line_content.strip():
+            logger.debug(f"Строка {i+1} пустая, пропускается.")
+            continue
             
-    return jsonify({"status": "success", "message": f"GSI данные получены, сформировано {new_messages_added_count} 'сообщений'."}), 200
+        logger.debug(f"Обработка строки {i+1}: {line_content[:100]}...")
+        chat_match = CHAT_REGEX_SAY.search(line_content)
+        if chat_match:
+            extracted_data = chat_match.groupdict()
+            chat_command_type = extracted_data['chat_command'].lower()
+            sender_name_raw = extracted_data['player_name'].strip()
+            message_text_raw = extracted_data['message'].strip()
+            
+            if message_text_raw.lower().startswith("!team1"):
+                command_param_part = message_text_raw[len("!team1"):].strip()
+                logger.info(f"Пользователь '{sender_name_raw}' выполнил команду !team1 (параметр: '{command_param_part}'). Очистка чата.")
+                display_chat_messages.clear()
+                system_message = {
+                    "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S.%f")[:-3],
+                    "sender": "СИСТЕМА",
+                    "msg": f"Чат очищен по команде от {html.escape(sender_name_raw)}. Инфо: {html.escape(command_param_part)}",
+                    "team": "Other"
+                }
+                display_chat_messages.append(system_message)
+                new_messages_added_count +=1
+                continue
+
+            if chat_command_type == "say":
+                timestamp_str = extracted_data.get('timestamp', datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%S.%f")[:-3])
+                player_team_raw = extracted_data['player_team']
+                
+                if not message_text_raw:
+                    logger.debug(f"Пустое 'say' сообщение от {sender_name_raw}, пропускается.")
+                    continue
+
+                team_identifier = "Other"
+                if player_team_raw.upper() == "CT": team_identifier = "CT"
+                elif player_team_raw.upper() == "TERRORIST" or player_team_raw.upper() == "T": team_identifier = "T"
+                
+                message_obj_for_display = {
+                    "ts": timestamp_str,
+                    "sender": html.escape(sender_name_raw),
+                    "msg": html.escape(message_text_raw),
+                    "team": team_identifier
+                }
+                display_chat_messages.append(message_obj_for_display)
+                new_messages_added_count += 1
+                logger.debug(f"Добавлено сообщение от {sender_name_raw}: {message_text_raw[:50]}...")
+        else:
+            logger.debug(f"Строка не соответствует CHAT_REGEX_SAY: {line_content[:100]}...")
+    
+    if new_messages_added_count > 0:
+        logger.info(f"Добавлено {new_messages_added_count} новых сообщений для чата. Всего в очереди: {len(display_chat_messages)}.")
+    else:
+        logger.info("Новых сообщений для чата не добавлено по результатам обработки этих логов.")
+            
+    return jsonify({"status": "success", "message": f"Обработано {len(log_lines)} строк, добавлено {new_messages_added_count} сообщений."}), 200
 
 # --- API Endpoint for Chat Data ---
 @app.route('/chat', methods=['GET'])
@@ -245,7 +242,6 @@ def get_structured_chat_data():
     logger.info(f"Запрос к /chat. Отправка {len(display_chat_messages)} сообщений.")
     try:
         response_data = list(display_chat_messages)
-        # logger.debug(f"Содержимое display_chat_messages перед jsonify: {response_data}")
         return jsonify(response_data)
     except Exception as e:
         logger.error(f"Критическая ошибка в get_structured_chat_data при jsonify: {e}", exc_info=True)
@@ -260,12 +256,14 @@ def index():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     is_production = os.environ.get('ENV_TYPE', 'production').lower() == 'production'
-    # Устанавливаем уровень логирования DEBUG, если не продакшн, для более детальных логов во время разработки
     if not is_production:
         logging.getLogger().setLevel(logging.DEBUG)
-        for handler in logging.getLogger().handlers:
+        for handler in logging.getLogger().handlers: # Убедимся, что все хендлеры тоже DEBUG
             handler.setLevel(logging.DEBUG)
-        logger.info("Режим отладки включен, уровень логирования установлен на DEBUG.")
+        logger.info("Режим отладки Flask включен, уровень логирования установлен на DEBUG для всех хендлеров.")
+    else:
+        logger.info("Режим продакшена Flask.")
 
-    logger.info(f"Запуск Flask приложения. Порт: {port}. Режим отладки (Flask debug prop): {not is_production}.")
+
+    logger.info(f"Запуск Flask приложения. Порт: {port}. Режим отладки Flask (app.debug): {not is_production}.")
     app.run(host='0.0.0.0', port=port, debug=not is_production)
